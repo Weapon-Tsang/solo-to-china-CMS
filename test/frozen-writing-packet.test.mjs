@@ -49,4 +49,12 @@ test('a frozen writing packet remains authoritative when a draft is saved and re
   assert.deepEqual(saved.draft.evidence_ledger[0].claim_keys,[key]);
   assert.deepEqual(saved.draft.evidence_ledger[0].source_ids,['source-route-maps']);
   assert.equal(saved.draft.evidence_ledger[0].content_node_ids.length,1);
+  // The lightweight readers used by pipeline input fingerprints must equal the
+  // full package exactly, or completed stages would lose artifact reuse.
+  assert.deepEqual(repository.briefFacts('brief'),repository.getBriefPackage('brief').facts);
+  assert.deepEqual(repository.briefRouteBundle('brief') ?? null,repository.getBriefPackage('brief').route_bundle ?? null);
+  db.prepare("DELETE FROM writing_packets WHERE id='packet'").run();
+  assert.deepEqual(repository.briefFacts('brief'),repository.getBriefPackage('brief').facts);
+  assert.deepEqual(repository.topicFacts('candidate'),repository.getTopicPackage('candidate').facts);
+  assert.equal(repository.briefFacts('missing').length,0);
 });

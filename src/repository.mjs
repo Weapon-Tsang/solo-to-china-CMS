@@ -289,7 +289,7 @@ export class Repository {
     if (job.type === "review_draft") return {
       productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
       draft,
-      evidence:draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+      evidence:draft ? semanticMaterial(this.briefFacts(draft.brief_id)) : [],
       content:draft ? this.db.prepare(`SELECT title,slug,meta_description,body_markdown,evidence_ledger_json,
         unresolved_conflicts_json,verification_notes_json,content_ast_json FROM article_drafts WHERE id=?`).get(entityId) : null,
       page:this.db.prepare(`SELECT payload_json,validation_json,status,contract_checksum,draft_revision,draft_content_hash
@@ -300,7 +300,7 @@ export class Repository {
     if (TRACKED_DELIVERY_STAGES.has(job.type)) return {
       productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
       draft,
-      evidence: draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+      evidence: draft ? semanticMaterial(this.briefFacts(draft.brief_id)) : [],
       content: draft ? this.db.prepare('SELECT title,slug,meta_description,body_markdown,content_blocks_json FROM article_drafts WHERE id=?').get(entityId) : null,
       review: this.db.prepare('SELECT passed,draft_content_hash,evidence_hash,checks_json FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC,id DESC LIMIT 1').get(entityId),
       commercial: job.type === 'compose_commercial'
@@ -315,10 +315,10 @@ export class Repository {
       const review = this.db.prepare(`SELECT issues_json,draft_content_hash,evidence_hash FROM quality_reviews
         WHERE draft_id=? ORDER BY created_at DESC LIMIT 1`).get(entityId);
       return { draft, review,
-        evidence:draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+        evidence:draft ? semanticMaterial(this.briefFacts(draft.brief_id)) : [],
         brief:draft ? this.db.prepare("SELECT plan_json,canonical_json,evidence_ledger_json,strategy_version FROM content_briefs WHERE id=?").get(draft.brief_id) : null };
     }
-    const facts = draft ? this.getBriefPackage(draft.brief_id)?.facts || [] : [];
+    const facts = draft ? this.briefFacts(draft.brief_id) : [];
     return { productionOwnerOpportunityId:job.production_owner_opportunity_id || null,draft, facts: semanticMaterial(facts),
       media: job.type === 'compose_frontend_page' ? this.db.prepare('SELECT id,status,source_asset_id,media_path FROM article_visuals WHERE draft_id=? ORDER BY id').all(entityId) : null };
   }
@@ -748,7 +748,7 @@ export class Repository {
       snapshot.checksum, JSON.stringify(payload), JSON.stringify(validationRecord), validationRecord.valid ? "valid" : "invalid", model, timestamp, timestamp,
       draft.revision, draft.content_hash);
     const pageHash = sha256(JSON.stringify(payload));
-    const route=this.getBriefPackage(draftRow?.brief_id)?.route_bundle;
+    const route=this.briefRouteBundle(draftRow?.brief_id);
     if(route && validationRecord.valid) saveRouteArtifact(this.db,{bundle:route,kind:'page',contentHash:draft.content_hash,
       receipt:{draft_id:draftId,page_dependency_hash:routePageDependencyHash(this.db,draftId),
         media_dependency_hash:routeMediaDependencyHash(this.db,draftId)}});
@@ -5691,6 +5691,24 @@ export class Repository {
       selected_blueprint_source_ids:json(row.selected_blueprint_source_ids_json,[]), exclusions:json(row.exclusions_json,[]) } : null;
   }
 
+  // Exactly getTopicPackage(candidateId).facts, without loading the source,
+  // experiences and editorial blueprint library.
+  topicFacts(candidateId) {
+    const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
+    if (!candidate) return [];
+    const opportunity = this.db.prepare(`SELECT coverage_json FROM content_opportunities WHERE candidate_id=?
+      ORDER BY (approved_at IS NOT NULL) DESC,(status='producing') DESC,updated_at DESC,id DESC LIMIT 1`).get(candidateId);
+    const coverage = json(opportunity?.coverage_json, {});
+    const assembly = this.getEditorialAssembly(candidateId);
+    const selectedKeys = new Set(assembly?.selected_fact_keys?.length ? assembly.selected_fact_keys : coverage.selectedFactKeys || []);
+    const destinationFacts = currentPublicationFacts(this.knowledgeForDestination(candidate.destination_slug));
+    return selectedKeys.size
+      ? withScopedCoverageLimitations(destinationFacts.filter((fact) => selectedKeys.has(fact.normalized_key)),
+        topicTokens(`${candidate.topic_key || ""} ${candidate.proposed_title || ""}`))
+      : scopeFactsForOpportunity(destinationFacts,
+        { destinationSlug: candidate.destination_slug, title: candidate.proposed_title, topic_key: candidate.topic_key });
+  }
+
   getTopicPackage(candidateId, { opportunityId = null } = {}) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate) return null;
@@ -5888,7 +5906,7 @@ export class Repository {
   assertDraftRouteCurrent(draftId) {
     const draft=this.db.prepare('SELECT brief_id,content_hash FROM article_drafts WHERE id=?').get(draftId);
     if(!draft) return;
-    const bundle=this.getBriefPackage(draft.brief_id)?.route_bundle;
+    const bundle=this.briefRouteBundle(draft.brief_id);
     if(!bundle) return;
     this.assertCurrentRoute(bundle);
     const matches=this.db.prepare(`SELECT receipt_json FROM route_artifacts WHERE route_id=? AND route_revision=?
@@ -5982,6 +6000,26 @@ export class Repository {
       WHERE id=(SELECT MIN(id) FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL HAVING COUNT(*)=1)`).run(timestamp,candidateId);
     if (!deferDraft) this.enqueue("generate_draft", briefId);
     return briefId;
+  }
+
+  // Exactly the facts getBriefPackage returns, without its media retrieval,
+  // WordPress inventory and SEO context. Pipeline input fingerprints only need
+  // these facts and run several times per job; building the full package there
+  // kept the 2-vCPU worker at ~100% CPU (2026-09-30: an 8-minute page stage).
+  briefFacts(briefId) {
+    const brief = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id = ?").get(briefId);
+    if (!brief) return [];
+    const packetSnapshots = (this.getWritingPacket(briefId)?.evidence_ledger || []).map((entry) => entry?.fact_snapshot);
+    return packetSnapshots.length && packetSnapshots.every(Boolean)
+      ? packetSnapshots : this.topicFacts(brief.candidate_id);
+  }
+
+  // Exactly getBriefPackage(...).route_bundle, for the route-version checks that
+  // run at the start of every delivery job and before media uploads.
+  briefRouteBundle(briefId) {
+    const brief = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id = ?").get(briefId);
+    if (!brief) return undefined;
+    return this.getWritingPacket(briefId)?.context?.route_bundle || this.routeForCandidate(brief.candidate_id);
   }
 
   getBriefPackage(briefId) {
@@ -6326,7 +6364,7 @@ export class Repository {
       if (expectedContentHash && targetRow.content_hash !== expectedContentHash) throw conflictError("The frozen revision hash does not match the reviewed rollback target.");
       const snapshot = json(targetRow.snapshot_json,{});
       if (!snapshot.body_markdown || snapshot.content_hash !== targetRow.content_hash) throw conflictError("The frozen revision snapshot is incomplete or inconsistent.");
-      const evidenceHash = evidenceHashForFacts(this.getBriefPackage(current.brief_id)?.facts || []);
+      const evidenceHash = evidenceHashForFacts(this.briefFacts(current.brief_id));
       const review = this.db.prepare(`SELECT * FROM quality_reviews WHERE draft_id=? AND draft_revision=?
         AND draft_content_hash=? AND evidence_hash=? AND passed=1 ORDER BY created_at DESC LIMIT 1`)
         .get(draftId,Number(targetRevision),targetRow.content_hash,evidenceHash);
@@ -7109,7 +7147,7 @@ export class Repository {
     const timestamp = now();
     const draft = this.db.prepare("SELECT revision, content_hash, strategy_version, brief_id FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) throw new Error(`Article draft ${draftId} not found.`);
-    const route=this.getBriefPackage(draft.brief_id)?.route_bundle;
+    const route=this.briefRouteBundle(draft.brief_id);
     if(route) {
       this.assertCurrentRoute(route);
       if(expectedVersion?.mediaDependencyHash && expectedVersion.mediaDependencyHash!==routeMediaDependencyHash(this.db,draftId))
@@ -7125,7 +7163,7 @@ export class Repository {
     if (expectedVersion && (draft.revision !== expectedVersion.revision || draft.content_hash !== expectedVersion.contentHash)) {
       throw Object.assign(new Error("STALE_DRAFT_VERSION: QA input changed before the review could be saved."), { retryable: false });
     }
-    const facts = this.getBriefPackage(draft.brief_id)?.facts || [];
+    const facts = this.briefFacts(draft.brief_id);
     const evidenceHash = evidenceHashForFacts(facts);
     if (expectedVersion?.evidenceHash && expectedVersion.evidenceHash !== evidenceHash) throw Object.assign(new Error("STALE_EVIDENCE_VERSION: evidence changed during quality review."), {retryable:false});
     this.db.prepare(`
@@ -7465,7 +7503,7 @@ export class Repository {
     const operations = new Map(operationRows.map((row) => {
       const review = latestReviews.get(row.draft_id);
       const currentHash = review ? (evidenceHashes.get(row.draft_id)
-        ?? evidenceHashForFacts(this.getBriefPackage(row.brief_id)?.facts || [])) : null;
+        ?? evidenceHashForFacts(this.briefFacts(row.brief_id))) : null;
       if (review && review.evidence_hash !== currentHash) {
         row.qa_passed=null;row.qa_score=null;row.quality_report_json='{}';staleReviews.add(row.draft_id);
       }
