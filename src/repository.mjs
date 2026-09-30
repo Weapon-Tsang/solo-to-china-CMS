@@ -7382,8 +7382,14 @@ export class Repository {
         SUM(CASE WHEN status IN ('planned','queued','generating') THEN 1 ELSE 0 END) AS visual_pending,
         SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS visual_failed
         FROM article_visuals GROUP BY draft_id) vs ON vs.draft_id=ad.id
-      LEFT JOIN (SELECT draft_id,COUNT(*) AS visual_candidate_pending_qa FROM visual_candidates
-        WHERE status='pending_qa' GROUP BY draft_id) vcs ON vcs.draft_id=ad.id
+      LEFT JOIN (SELECT vc.draft_id,COUNT(*) AS visual_candidate_pending_qa FROM visual_candidates vc
+        JOIN article_visuals av ON av.id=vc.visual_id AND av.draft_id=vc.draft_id
+        -- Only a candidate the visual stage can still resume counts: its slot is
+        -- unfinished and still bound to the source the candidate was made from.
+        -- A leftover from a replaced source or an already completed slot is history.
+        WHERE vc.status='pending_qa' AND av.status IN ('planned','queued','generating','failed')
+          AND COALESCE(vc.source_asset_id,'')=COALESCE(av.source_asset_id,'')
+        GROUP BY vc.draft_id) vcs ON vcs.draft_id=ad.id
       LEFT JOIN production_record_controls prc ON prc.opportunity_id=co.id
       WHERE (? IS NULL OR tc.id=? OR co.id=?)
         AND (?=0 OR co.approved_at IS NOT NULL)

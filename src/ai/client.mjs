@@ -87,6 +87,9 @@ export function createAiClient(config, fetchImpl = fetch) {
         acceptCompletion(input, shared);
         return shared;
       }
+      // Paid-dispatch ledgers must see only requests that leave this process;
+      // cache hits and shared in-flight calls above never reach the provider.
+      input.onProviderDispatch?.();
       const completion = current().completeJson(input);
       pending.set(identity.key, completion);
       try {

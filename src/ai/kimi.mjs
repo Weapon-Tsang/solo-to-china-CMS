@@ -121,13 +121,17 @@ export class KimiExtractor {
     if (!this.enabled) throw Object.assign(new Error("Image analysis provider is not configured."),{code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false});
     const images=await this.client.imageParts([{...asset,kind:"image"}]);
     if (!images.parts.length) throw Object.assign(new Error("Stored source image bytes are unavailable for analysis."),{code:"SOURCE_IMAGE_BYTES_MISSING",retryable:false});
-    const permit=this.config.mediaRequestExecutor?.acquire({provider:this.config.provider || 'vertex',
+    // Acquire the media dispatch only when the request actually leaves for the
+    // provider. A recovery that replays an analysis from the response cache must
+    // not consume the bounded paid-dispatch budget of this visual.
+    let permit=null;
+    const acquirePermit=()=>{ permit=this.config.mediaRequestExecutor?.acquire({provider:this.config.provider || 'vertex',
       model:this.config.model || 'unknown',accountScope:`${this.config.projectId || 'default'}:${this.config.location || 'global'}`,
-      visualId:telemetryContext?.visualId || asset.id,substage:'analyze_source_image'});
+      visualId:telemetryContext?.visualId || asset.id,substage:'analyze_source_image'}) || null; };
     let completion;
     try {
       const source={id:asset.source_id,capture_version:asset.capture_version,media_context:asset.media_context,assets:[asset]};
-      completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,
+      completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,onProviderDispatch:acquirePermit,
         instructions:`${MEDIA_ANALYSIS_PROMPT}\n${MEDIA_CONTEXT_INSTRUCTIONS}`,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
           sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",media_context:sharedMediaContext(source)})},
           ...contextualImageParts(source,[asset],images)],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});

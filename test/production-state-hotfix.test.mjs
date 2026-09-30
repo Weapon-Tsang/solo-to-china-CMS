@@ -119,6 +119,44 @@ test("a planned visual remains pending in production state instead of appearing 
     'inferred pending media has no provider retry budget and must not show 0/0 retries');
 });
 
+// Production regression (Three Gorges Museum draft): a card derivative stayed
+// pending_qa after its source was rejected and the slot later completed with
+// another photo. The leftover candidate kept reporting VISUAL_CANDIDATE_PENDING_QA.
+test("a pending QA candidate counts only while its slot can still resume it",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"stale-qa-owner",{approved:true});
+  repository.configureProductionCapabilities({visuals:true});
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('stale-qa-brief','beijing','Beijing museum','[]','informational','drafted','2026-09-13','2026-09-13','shared-candidate')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('stale-qa-draft','stale-qa-brief','Beijing museum','beijing-museum','## Visit\n\nBody.','{}','needs_review','2026-09-13','2026-09-13',1,'stale-qa-hash')`).run();
+  db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,raw_payload_json,content_hash,created_at,updated_at)
+    VALUES ('stale-qa-source','manual','manual-source://stale-qa','now','Evidence','','{}','stale-qa-source-hash','now','now')`).run();
+  for (const [id,position] of [['card-asset',0],['museum-photo',1]]) db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,mime_type,original_filename)
+    VALUES (?,'stale-qa-source','image',?,?,?,'image/jpeg',?)`).run(id,`manual-asset://stale-qa/${position}`,position,`${id}.jpg`,`${id}.jpg`);
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,caption,generation_prompt,aspect_ratio,
+    image_type,image_role,image_subject,acquisition_strategy,factual_image_required,status,created_at,updated_at,asset_fingerprint,source_asset_id)
+    VALUES ('stale-qa-visual','stale-qa-draft',1,'hero','support','Alt','','','3:4','infographic','hero','Museum exterior',
+      'recompose_editorial_card',1,'planned','2026-09-13','2026-09-13','card-fingerprint','card-asset')`).run();
+  db.prepare(`INSERT INTO visual_candidates(id,visual_id,draft_id,source_asset_id,transform_input_hash,output_hash,media_path,
+    mime_type,byte_size,provider,model,status,created_at,updated_at)
+    VALUES ('stale-qa-candidate','stale-qa-visual','stale-qa-draft','card-asset','transform','output','/missing.png',
+      'image/png',1,'vertex_gemini_text_layout','model','pending_qa','2026-09-13','2026-09-13')`).run();
+  const state=()=>repository.listContentWorkspace({productionOnly:true}).items[0];
+  const errorCode=(item)=>(item.production_state.latest_error || item.production_state.latest_historical_error)?.code;
+  assert.equal(state().visual_candidate_pending_qa,1,'a resumable candidate of the current source still blocks the stage');
+  assert.equal(errorCode(state()),'VISUAL_CANDIDATE_PENDING_QA');
+
+  db.prepare(`UPDATE article_visuals SET source_asset_id='museum-photo',acquisition_strategy='use_authorized_source_image',
+    image_type='real_world_photo',asset_fingerprint='photo-fingerprint' WHERE id='stale-qa-visual'`).run();
+  assert.equal(state().visual_candidate_pending_qa,0,'a candidate of a replaced source cannot be resumed');
+  assert.notEqual(errorCode(state()),'VISUAL_CANDIDATE_PENDING_QA');
+
+  db.prepare(`UPDATE article_visuals SET source_asset_id='card-asset',status='generated',media_path='/generated.png' WHERE id='stale-qa-visual'`).run();
+  const completed=state();
+  assert.equal(completed.visual_candidate_pending_qa,0,'a completed slot never waits on an old candidate');
+  assert.equal(completed.production_state.completed_stages.includes('generate_visuals'),true);
+});
+
 test("one Candidate-level failure has one canonical approved production owner",(t)=>{
   const {db,repository}=repositoryFixture(t); candidate(db);
   opportunity(db,"owner-approved",{approved:true}); opportunity(db,"sibling-a"); opportunity(db,"sibling-b");
