@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { repositoryFixture } from '../test-support/repository-fixture.mjs';
 import { normalizeXiaohongshuCapture } from '../src/adapters/xiaohongshu.mjs';
-import { opportunityTitlePackage,queueOpportunityTitles,saveOpportunityTitles } from '../src/services/opportunity-titles.mjs';
+import { opportunityTitlePackage,queueOpportunityTitles,saveOpportunityTitles,validateOpportunityTitles } from '../src/services/opportunity-titles.mjs';
 import { Pipeline } from '../src/pipeline.mjs';
 import { ContentEngine } from '../src/ai/content-engine.mjs';
 
@@ -117,6 +117,8 @@ test('title model contract requires English angles, evidence and bounded reader 
   const result=await engine.composeOpportunityTitles({opportunities:[]});
   assert.equal(result.name,'opportunity_editorial_titles');
   assert.match(result.instructions,/Never invent/);
+  assert.match(result.instructions,/contain no Chinese characters, including quoted signs/);
+  assert.match(result.instructions,/Translate quoted signage into English/);
   assert.ok(result.schema.properties.proposals.items.required.includes('evidence_keys'));
 });
 
@@ -133,3 +135,15 @@ test('rejected template output is never reused and an explicit retry can generat
   await pipeline.runOne();assert.equal(calls,2);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(second).status,'succeeded');
 });
+
+
+test('Chinese signs and parenthetical entity names cannot leak into English opportunity titles',()=>{
+  const input={id:'signage-regression',subject:'Chongqing commercial street',facts:[{key:'attraction.signage'}]};
+  const proposal={id:input.id,title:"Spotting the '我在重庆' Landmark Displays Along Pedestrian Corridors",angle:'Street signage',reader_promise:'Identify the supplied landmark displays.',evidence_keys:['attraction.signage']};
+  assert.throws(()=>validateOpportunityTitles({opportunities:[input]},{proposals:[proposal]}),/specific English/);
+  proposal.title="Spotting the 'I Am in Chongqing' Landmark Displays Along Pedestrian Corridors";
+  assert.equal(validateOpportunityTitles({opportunities:[input]},{proposals:[proposal]}).length,1);
+  proposal.title='Visiting Sanmao Former Residence (三毛故居) Along Huangjueya Old Street';
+  assert.throws(()=>validateOpportunityTitles({opportunities:[input]},{proposals:[proposal]}),/specific English/);
+});
+

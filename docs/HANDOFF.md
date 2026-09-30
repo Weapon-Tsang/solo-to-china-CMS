@@ -1,6 +1,6 @@
-# 2.0.74 opportunity title batch performance
+# 2.0.75 English opportunity signage titles
 
-App/Extension version `2.0.74`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Share source-completeness and family membership projection only within a synchronous opportunity title batch. This removes repeated current-media checks as already titled opportunities grow, while preserving the exact AI inputs, evidence fingerprints, approval guards and fresh checks across jobs. Content Production Strategy 3.9 and `config/content-strategy.json` remain unchanged. This same-schema code-only patch follows the real 2.0.73 production title rollout; see its acceptance record below.
+App/Extension version `2.0.75`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Share source-completeness and family membership projection only within a synchronous opportunity title batch. This removes repeated current-media checks as already titled opportunities grow, while preserving the exact AI inputs, evidence fingerprints, approval guards and fresh checks across jobs. Content Production Strategy 3.9 and `config/content-strategy.json` remain unchanged. This same-schema code-only patch follows the real 2.0.73 production title rollout; see its acceptance record below.
 
 # 2.0.73 opportunity editorial titles
 
@@ -447,3 +447,6 @@ The Sources dashboard also accepts explicit administrator submissions: public Xi
 - Image generation remains a separate pipeline whose default is Gemini 3.1 Flash Image (`gemini-3.1-flash-image`). Never route factual image generation through the text/writing model.
 - `/api/dashboard` returns `actionCounts` for menu badges. Counts represent records with a real operator action: failed Sources, pending Recommendations, WordPress delivery/sync failures, open Commercial opportunities, all operational Exceptions, failed maintenance/integration runs, and required AI/Contract configuration.
 - The mobile admin navigation is a three-column grid. Do not reintroduce a horizontally scrolling tab list on phone breakpoints.
+
+
+Production diagnosis found Chinese quoted signage leaking into an English title and blocking its entire six-item batch. Prompt now explicitly translates or describes quoted signage in English and forbids Chinese parenthetical names in titles. Validation stays strict; current ready titles and their evidence hashes are preserved. A bounded six-opportunity real-provider canary covers the previously blocked production inputs.

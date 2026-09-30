@@ -3,7 +3,7 @@
 Change class: AI_PROVIDER / PIPELINE / DATABASE_LOGIC
 Release class: CODE_ONLY_RELEASE，版本 2.0.74（2.0.73 已正式上线），schema 保持 83。
 
-用户明确要求机会阶段生成具体英文标题，并授权完成验收、提交、推送、部署到生产。当前状态：2.0.73 已上线并成功启动正式拟题；2.0.74 性能补丁正在最终验收。
+用户明确要求机会阶段生成具体英文标题，并授权完成验收、提交、推送、部署到生产。当前状态：2.0.74 已完成正式上线，health/readiness 通过，正式拟题正在完成剩余机会。
 
 ## 问题与改动
 
@@ -47,4 +47,21 @@ Release class: CODE_ONLY_RELEASE，版本 2.0.74（2.0.73 已正式上线），s
 
 真实生产 batch 后期从约 24 秒增长到 142 秒，而 Provider 调用仍约 10–12 秒。相邻扫描发现 title package 为每个已拟题机会重复检查当前媒体完整性和来源 families，导致同步耗时随已完成记录增长。2.0.74 在每次同步 package/save 内共享 createFamilyProjectionContext；跨 jobs 不复用。原六个真实 Golden 样本的完整输入 SHA256 在优化前后完全一致：679aeeea7f6c8497d146529dedb69ca109e8d90d7577b60ba5a445ae2afcc2dc。因此无需为没有改变的 Prompt/Schema 重复付费 Canary；仍通过正式队列的真实调用确认发布后行为。
 
-2.0.74 的定向标题/正文链路测试 22 项通过；最终 release gate、不可变镜像和上线性能将随后记录。生产浏览器完整交互 NOT TESTED：内置浏览器停在登录页面，Chrome 连接超时；已完成本地浏览器 E2E 和生产 authenticated API 验收，不能将这两者称为生产浏览器 E2E。
+2.0.74 定向标题/正文链路测试 22 项通过，完整 unit/integration 1,207 项通过，最终 release gate 50 项必需检查通过、0 失败；隔离镜像的 API/Worker 启动、网络切换及跨挂载回滚演练通过。生产浏览器完整交互 NOT TESTED：内置浏览器停在登录页面，Chrome 连接超时；已完成本地浏览器 E2E 和生产 authenticated API 验收，不能将这两者称为生产浏览器 E2E。
+
+## 2.0.74 正式切换
+
+代码提交并推送：9efe631df175f37e67012c131572f0ef031445e6。不可变镜像：sha256:12da2f785eca53bd0a95f18d8e364299f7e796cf47956f8ab7d2a5f1f940bd84。公开 health/readiness 返回 2.0.74，schema=83；API/Worker 和 VM verified-container 启动检查均已固定到新镜像。上一版本保留为 engine-before-9efe631d / engine-worker-before-9efe631d，2.0.72 容器也未清理。
+
+新版本真实拟题 batch 已验证：9,921 / 12,950 / 13,610 / 14,343 / 12,447 毫秒，相比旧慢 batch 的 141,789 毫秒显著降低。首屏实际 20 项全部 editorialTitle=ready，facet-list template=0，已生成标题中文=0、完全重复=0。一个旧后续 batch 被严格校验拒绝，使用正常重试入口返回 202 并成功继续队列；旧失败记录作为历史保留，拒绝结果未成为可批准标题。
+
+最终全部机会数量和 Post-Fix Audit 以同期 summary JSON / 本地 final audit 为准。生产 WordPress 写入、浏览器真实采集、全库真实 Capture→QA 不在验收覆盖内。
+
+
+## 2.0.75 signage regression
+
+2.0.74 normal production generation reached 177 of 198 pending opportunities. Four semantic-rejected batches were retained as failed job history; no invalid output became an approvable title. Two consecutive failures on the same six inputs triggered bounded diagnosis rather than continued blind retries.
+
+One isolated real-provider diagnostic (production writes=0) confirmed that a proposal copied the Chinese signage “我在重庆” into an otherwise English title. The output validator correctly rejected it. The prompt now requires 12–140 characters, forbids Chinese characters in titles including quoted signage and parenthetical names, and translates or describes signage in English. Evidence retains original text. The output validator and current ready-title hashes remain unchanged.
+
+A second bounded canary used the same six blocked current production inputs with the patched prompt: PASS, one dispatch, 5,084 input tokens, 930 output tokens, 9,630 ms, production writes=0. All six proposals passed the unchanged local semantic validator. Targeted title/editorial/content-chain tests: 23 PASS, including permanent quoted-signage and parenthetical-name regression. Final production counts and 2.0.75 deployment evidence will be appended after the immutable release completes.

@@ -1,6 +1,10 @@
 # Changelog
 
-## 2.0.74 - Unreleased
+## 2.0.75 - Unreleased
+
+- Require English-only opportunity titles even when source evidence includes quoted Chinese signage or parenthetical entity names; retain strict output rejection and add the production signage regression.
+
+## 2.0.74 - 2026-09-30
 
 - Share the current source/family projection within each synchronous title batch to avoid repeating media completeness scans for every already titled opportunity; retain fresh projection checks between jobs and preserve the original model input hashes.
 
