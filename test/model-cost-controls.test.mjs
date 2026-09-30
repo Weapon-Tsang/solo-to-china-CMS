@@ -478,3 +478,21 @@ test("the entity review watermark bootstraps from the last successful resolution
   assert.equal(repository.entityReviewSince("chongqing"), "2026-09-29T20:09:00.000Z");
   assert.ok(db.prepare("SELECT 1 FROM integration_sync_state WHERE sync_key='entity_full_review:chongqing'").get());
 });
+
+// 2026-09-30: an operator-adopted photo ("上传图片补齐") for the Three Gorges
+// Museum article failed QA with image_strategy_invalid because the deterministic
+// image-strategy gate did not recognise manual_article_selection.
+import { applyDeterministicGates } from "../src/ai/content-engine.mjs";
+
+test("the image-strategy gate accepts a locked operator photo and still rejects unbound or unlocked ones", () => {
+  const visual = (manual, overrides = {}) => ({ slot: 1, image_type: "infographic", acquisition_strategy: "manual_article_selection",
+    factual_image_required: 1, source_asset_id: "manual_asset_1", media_metadata: { manual_article_selection: manual }, ...overrides });
+  const strategyIssue = (visuals) => applyDeterministicGates({ checks: [], issues: [], unsupported_claims: [] },
+    { draft: { body_markdown: "## Visit\n\nText.", visuals } }).issues.some((issue) => issue.code === "image_strategy_invalid");
+  const locked = { locked: true, local_photo: true, asset_id: "manual_asset_1", route_blocked: false };
+  assert.equal(strategyIssue([visual(locked)]), false);
+  assert.equal(strategyIssue([visual({ ...locked, locked: false })]), true);
+  assert.equal(strategyIssue([visual({ ...locked, asset_id: "other_asset" })]), true);
+  assert.equal(strategyIssue([visual({ ...locked, local_photo: false })]), true, "non-local manual media still needs its own review path");
+  assert.equal(strategyIssue([visual(null)]), true);
+});

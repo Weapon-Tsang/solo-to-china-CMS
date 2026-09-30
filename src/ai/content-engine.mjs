@@ -1441,6 +1441,15 @@ export function applyDeterministicGates(review, contentPackage) {
   addGate("heading-hierarchy", hasSafeHeadingHierarchy(draft.body_markdown),
     "The post title owns H1; body Markdown may use orderly H2/H3/H4 headings only.", "heading_hierarchy_invalid");
   const visualStrategySafe = (draft.visuals || []).every((visual) => {
+    // An operator-confirmed upload ("上传图片补齐") is a retained original, never
+    // model-generated. Its bytes, hash, audit and zero provider calls are verified
+    // again by publication eligibility before delivery (2026-09-30: the gate did
+    // not know this strategy and blocked every manually adopted photo).
+    if (visual.acquisition_strategy === "manual_article_selection") {
+      const manual = visual.media_metadata?.manual_article_selection;
+      return Boolean(manual?.locked && visual.source_asset_id && manual.asset_id === visual.source_asset_id
+        && !manual.route_blocked && (manual.local_photo || manual.route_action === "recompose_approved"));
+    }
     if (visual.image_type === "real_world_photo") {
       if (["use_authorized_source_image", "localize_source_image", "localize_photo_overlay"].includes(visual.acquisition_strategy)) {
         return visual.factual_image_required && Boolean(visual.source_asset_id);
