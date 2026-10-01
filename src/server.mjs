@@ -1080,6 +1080,13 @@ export function createApplication(config = loadConfig(), { seoInspector } = {}) 
         return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Content production record not found." });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
+        // Upgrade old fact-only projections once. Normal pagination reads the
+        // stored projection; approval always rechecks current material.
+        if(repository.db.prepare(`SELECT 1 FROM content_opportunities WHERE strategy_version=?
+          AND inbox_state='ACTIONABLE' AND lifecycle_state IN ('recommended','recommended_again','deferred')
+          AND json_extract(readiness_json,'$.ready')=1
+          AND json_extract(processing_detail_json,'$.media.version') IS NULL LIMIT 1`).get(repository.strategyVersion))
+          repository.reconcileRecommendationInbox();
         const pageSize=Math.min(100,limit(url.searchParams.get("limit") || '20'));
         const offset=Math.max(0,Number.parseInt(url.searchParams.get("cursor") || "0",10) || 0);
         const inbox = repository.listRecommendationInbox(pageSize + 1,{reconcile:false,cursor:offset});
@@ -1111,6 +1118,7 @@ export function createApplication(config = loadConfig(), { seoInspector } = {}) 
             actionableInbox: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='ACTIONABLE' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
             processingGap: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='INTERNAL' AND processing_state='PROCESSING_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
             evidenceGap: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE processing_state='EVIDENCE_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
+            mediaGap: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE strategy_version=? AND json_extract(processing_detail_json,'$.media.ready')=0 AND lifecycle_state IN ('recommended','recommended_again','deferred')").get(repository.strategyVersion).n,
             merged: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='MERGED' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
             superseded: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='SUPERSEDED' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
           } });

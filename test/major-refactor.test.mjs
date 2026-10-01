@@ -8,6 +8,7 @@ import { CaptureMediaUploadManager } from "../src/capture-media-upload.mjs";
 import { SCHEMA_VERSION } from "../src/db.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 import { acceptFixtureTitles } from '../test-support/opportunity-title-fixture.mjs';
+import { seedOpportunityPhoto } from '../test-support/opportunity-media-fixture.mjs';
 import { previewRepair, applyRepair } from '../scripts/repair-opportunity-families.mjs';
 
 test("current schema installs the durable editorial, failure, reconciliation, and backfill boundaries", (t) => {
@@ -137,9 +138,9 @@ test("Experience Blocks reject invented provenance and persist grounded sequence
   assert.equal(db.prepare("SELECT status FROM system_backfill_runs WHERE id=?").get(backfill.id).status,"completed");
 });
 
-test("knowledge change creates an independent multi-source opportunity and Writing Packet selects only assembled evidence", (t) => {
-  const { repository }=repositoryFixture(t);
-  saveResearchSource(repository,"metroA",[
+test("knowledge change creates an independent multi-source opportunity and Writing Packet selects only assembled evidence", async (t) => {
+  const { repository,directory }=repositoryFixture(t);
+  const sourceId=saveResearchSource(repository,"metroA",[
     ["shanghai.metro.route","Shanghai Metro","route","Line 2 connects the airport corridor"],
     ["shanghai.metro.payment","Shanghai Metro","payment","Use a supported mobile payment method"],
   ],"Line 2 connects the airport corridor. Use a supported mobile payment method.");
@@ -147,11 +148,13 @@ test("knowledge change creates an independent multi-source opportunity and Writi
     ["shanghai.metro.station","Shanghai Metro","station","People's Square is a useful interchange"],
     ["shanghai.metro.schedule","Shanghai Metro","schedule","Last-train time depends on the line"],
   ],"People's Square is a useful interchange. Last-train time depends on the line.");
+  await seedOpportunityPhoto(repository,directory,{sourceId,subject:'Shanghai Metro airport entrance',destination:'shanghai'});
   repository.rebuildKnowledge("shanghai");
   repository.rebuildTopicClusters("shanghai");
   const rebuilt=repository.rebuildKnowledgeOpportunities("shanghai");
   assert.ok(rebuilt.created >= 1,JSON.stringify({rebuilt,knowledge:repository.knowledgeForDestination("shanghai")}));
   const opportunity=repository.listRecommendationInbox().find((item) => item.coverage.knowledgeEventGenerated);
+  assert.ok(opportunity,JSON.stringify(repository.db.prepare('SELECT * FROM content_opportunities').all().map(row=>({title:row.title,processing:JSON.parse(row.processing_detail_json),media:repository.opportunityMediaReadiness(row)}))));
   assert.equal(opportunity.coverage.publicationMode,"multi_source_synthesis");
   assert.ok(opportunity.coverage.selectedSourceIds.length >= 2);
 

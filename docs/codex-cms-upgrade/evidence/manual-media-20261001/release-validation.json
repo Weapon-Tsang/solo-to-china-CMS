@@ -1,0 +1,32 @@
+{
+  "version": "2.0.79",
+  "releaseClass": "CODE_ONLY_RELEASE",
+  "unchangedSchema": 83,
+  "tests": {
+    "L1": "PASS",
+    "L2": "PASS: 1230 tests, 50 mandatory release checks",
+    "L3": "PASS: retained production baseline/work replay; focused attraction constraints unchanged in the release follow-up",
+    "L4": "PASS: authenticated local choice-only upload/adoption, independent body/cover and refresh; production browser NOT TESTED",
+    "L5": "NOT REQUIRED: no AI provider or prompt changes",
+    "L6": "PASS: mocked Capture-to-QA-to-mock-WordPress flows in all three pipeline modes; full real-provider replay NOT TESTED",
+    "postFixAudit": "ISSUES FOUND: old missing-media candidates and locally unavailable retained bytes, detailed in replay.json"
+  },
+  "followUpRegression": "Broad preparation guides may use subjects from selected facts; unselected destination facts and a metro photo for a focused zoo guide remain blocked.",
+  "cleanup": {
+    "localBytesRemoved": 18306204278,
+    "localTargetsRemoved": 495,
+    "localFailures": 0,
+    "extraIgnoredRouteFilesRemoved": 19,
+    "preserved": [
+      "data",
+      "backups",
+      "output/backups",
+      "node_modules",
+      "tracked files",
+      "compact acceptance evidence"
+    ]
+  },
+  "productionDeployment": "PENDING: recorded separately after immutable-image rollout",
+  "productionWritesDuringTesting": 0,
+  "realProviderCallsDuringTesting": 0
+}

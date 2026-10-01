@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
+import {seedOpportunityPhoto} from '../test-support/opportunity-media-fixture.mjs';
 
 function saveSource(repository,{externalId="second-pass-source",images=[],claims=2}={}) {
   const text="Take Line 2 from the airport. Use a supported mobile payment method. Check the last train before departure.";
@@ -118,11 +119,12 @@ test("recommendation backfill queues only diagnostics with an incompatible contr
   assert.equal(job.recovery_run_id,preview.id);
 });
 
-test("Content becomes visible only after the durable production entry job exists", (t) => {
-  const {repository}=repositoryFixture(t);
+test("Content becomes visible only after the durable production entry job exists", async (t) => {
+  const {repository,directory}=repositoryFixture(t);
   const sourceId=saveSource(repository);
   repository.saveExperienceExtraction(sourceId,{blocks:[]},"test");
   const opportunity=saveRecommendation(repository,sourceId);
+  await seedOpportunityPhoto(repository,directory,{sourceId,subject:opportunity.title,destination:'shanghai'});
   repository.listRecommendationInbox();
   repository.db.prepare(`UPDATE content_opportunities SET readiness_json='{"ready":true,"factCount":2,"sourceFamilyCount":1}',
     readiness_score=100,processing_state='CURRENT',inbox_state='ACTIONABLE' WHERE id=?`).run(opportunity.id);
@@ -132,17 +134,20 @@ test("Content becomes visible only after the durable production entry job exists
   assert.equal(repository.listContent({productionOnly:true}).length,1);
 });
 
-test("semantic intent reconciliation merges title variants without deleting internal opportunities", (t) => {
-  const {db,repository}=repositoryFixture(t);
+test("semantic intent reconciliation merges title variants without deleting internal opportunities", async (t) => {
+  const {db,repository,directory}=repositoryFixture(t);
   const insert=db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,
     title,content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state)
     VALUES (?,'chongqing','["chongqing"]',?,?,?,'itinerary',100,'{"ready":true,"factCount":4,"sourceFamilyCount":2}',
       '{"publicationMode":"topic_feature"}','recommended','2026-09-12','2026-09-12','recommended')`);
   insert.run("semantic-a","chongqing:72-hour",repository.strategyVersion,"Chongqing for first-time travelers: a 72-hour walking route");
   insert.run("semantic-b","chongqing:3-day",repository.strategyVersion,"3-day city walk itinerary in Chongqing");
+  const photo=await seedOpportunityPhoto(repository,directory,{subject:'Jiefangbei Clock Tower'});
+  db.prepare("UPDATE content_opportunities SET source_ids_json=?,coverage_json=json_set(coverage_json,'$.proposal',json(?))")
+    .run(JSON.stringify([photo.sourceId]),JSON.stringify({targetEntities:['Jiefangbei Clock Tower']}));
   const summary=repository.reconcileRecommendationInbox();
   assert.equal(summary.internalOpportunities,2);
-  assert.equal(summary.actionableInbox,1);
+  assert.equal(summary.actionableInbox,1,JSON.stringify(db.prepare('SELECT id,processing_detail_json FROM content_opportunities').all()));
   assert.equal(summary.merged,1);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM content_opportunities").get().n,2);
   assert.equal(repository.listRecommendationInbox().length,1);
@@ -162,21 +167,24 @@ test("superseded strategy rows do not inflate current processing totals", (t) =>
   assert.equal(db.prepare("SELECT inbox_state FROM content_opportunities WHERE id='historical-opportunity'").get().inbox_state,"SUPERSEDED");
 });
 
-test("historical production failure re-enters the inbox only with an active safe remediation", (t) => {
-  const {db,repository}=repositoryFixture(t);
+test("historical production failure re-enters the inbox only with an active safe remediation", async (t) => {
+  const {db,repository,directory}=repositoryFixture(t);
   db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,
     title,content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state)
-    VALUES ('retry-opportunity','xian','["xian"]','xian:retry',?,'Xi''an practical guide','practical_guide',100,
+    VALUES ('retry-opportunity','xian','["xian"]','xian:retry',?,'Xi''an Terracotta Warriors practical guide','practical_guide',100,
       '{"ready":true}','{"publicationMode":"topic_feature"}','recommended','now','now','recommended_again')`).run(repository.strategyVersion);
   db.prepare(`INSERT INTO failure_lessons(id,scope,failure_code,category,normalized_reason,opportunity_id,failing_stage,
     previous_input_json,remediation_rule,retry_safe,status,created_at,updated_at)
     VALUES ('retry-lesson','OPPORTUNITY','QUALITY','EDITORIAL_QUALITY','old prose failed','retry-opportunity','review_draft','{}',
       'Rebuild the narrative plan.',0,'active','now','now')`).run();
   db.prepare("UPDATE content_opportunities SET last_failure_lesson_id='retry-lesson' WHERE id='retry-opportunity'").run();
+  const photo=await seedOpportunityPhoto(repository,directory,{subject:"Terracotta Warriors in Xi'an",destination:'xian'});
+  db.prepare("UPDATE content_opportunities SET source_ids_json=? WHERE id='retry-opportunity'").run(JSON.stringify([photo.sourceId]));
   assert.deepEqual(repository.listRecommendationInbox(),[]);
   assert.equal(db.prepare("SELECT inbox_state FROM content_opportunities WHERE id='retry-opportunity'").get().inbox_state,"SUPERSEDED");
   db.prepare("UPDATE failure_lessons SET retry_safe=1 WHERE id='retry-lesson'").run();
-  assert.equal(repository.listRecommendationInbox()[0].displayStatus,"建议重新生产");
+  const inbox=repository.listRecommendationInbox();
+  assert.equal(inbox[0]?.displayStatus,"建议重新生产",JSON.stringify(db.prepare('SELECT processing_detail_json FROM content_opportunities').all()));
 });
 
 test("System Health excludes maintenance, browser repair, and editorial evidence work", (t) => {

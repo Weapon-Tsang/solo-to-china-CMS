@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.79 - Unreleased
+
+- Replace required English image captions and relationship text with choices for body or cover, image type and editorial relationship, followed by one adoption confirmation.
+- Keep body and cover selections separate when the same uploaded original is used for both purposes.
+- Check relevant, usable original-media candidates before admitting fact-ready recommendations or approving production; revalidate stale fact-only inbox projections on first read.
+- Label the former material-readiness score as fact coverage and add permanent regressions for missing, stale, unrelated and unsuitable images.
+
 ## 2.0.78 - Unreleased
 
 - Audit cached recognized source photos during article recovery before buying discovery requests. Resume bounded local audit batches without losing the required visual obligation.

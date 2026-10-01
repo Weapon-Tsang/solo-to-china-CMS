@@ -25,6 +25,49 @@ async function upload(f,bytes=f.bytes){const input={expected_revision:2,name:'Ph
   return f.service.complete(f.draftId,created.id,'editor');}
 const request=(f,u)=>({expected_revision:2,expected_media_revision:0,selections:[{upload_id:u.id,slot_id:f.visualId,purpose:'body',kind:'photo',caption:'East Hall in Beijing.',description:'Editor identifies the East Hall scene.',no_reader_text:true,factual_photo:true,quality_confirmed:true}]});
 
+test('operator can adopt a body photo using choices only; descriptions and local processing require no English input',async t=>{
+  const f=await fixture(t),u=await upload(f),before=f.db.prepare('SELECT * FROM article_drafts WHERE id=?').get(f.draftId);
+  const input={expected_revision:2,expected_media_revision:0,selections:[{upload_id:u.id,slot_id:f.visualId,
+    purpose:'body',kind:'photo',relationship:'article_subject',quality_confirmed:true}]};
+  const plan=f.service.plan(f.draftId,input,'editor');
+  assert.equal(plan.steps[0].status,'LOCAL_VALIDATION_AND_WEB_DERIVATIVE');
+  assert.equal(plan.selections[0].caption,'Editor-selected photograph for this article.');
+  assert.ok(!plan.selections[0].caption.includes('East Hall'),'unobserved pixels are not inferred from a failed slot');
+  const result=await f.service.confirm(f.draftId,{...input,confirmed:true,plan_hash:plan.plan_hash,idempotency_key:'choice_only_body_photo'},'editor');
+  assert.equal(result.state,'local_ready');
+  assert.deepEqual(f.db.prepare('SELECT * FROM article_drafts WHERE id=?').get(f.draftId),before);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM model_call_metrics').get().n,0);
+  assert.equal(f.service.list(f.draftId,'editor').slots[0].purpose,'body');
+});
+
+test('choice-only cover stays separate; background or illustration cannot replace a required subject photograph',async t=>{
+  const f=await fixture(t),u=await upload(f);
+  const input={expected_revision:2,expected_media_revision:0,selections:[{upload_id:u.id,purpose:'cover',kind:'photo',relationship:'article_subject',quality_confirmed:true}]};
+  const plan=f.service.plan(f.draftId,input,'editor');
+  assert.equal(plan.steps[0].status,'COVER_GEOMETRY_REQUIRED');
+  const result=await f.service.confirm(f.draftId,{...input,confirmed:true,plan_hash:plan.plan_hash,idempotency_key:'choice_only_cover_photo'},'editor');
+  assert.equal(result.state,'waiting_attention');
+  assert.equal(f.service.list(f.draftId,'editor').slots.find(s=>s.id===plan.selections[0].slot_id).purpose,'cover');
+  f.db.prepare('UPDATE article_visuals SET factual_image_required=1 WHERE id=?').run(f.visualId);
+  const next=request(f,u);next.expected_media_revision=1;next.selections[0].relationship='context';
+  assert.throws(()=>f.service.plan(f.draftId,next,'editor'),error=>error.code==='MEDIA_SUBJECT_REQUIRED');
+  next.selections[0].relationship='invalid';
+  assert.throws(()=>f.service.plan(f.draftId,next,'editor'),error=>error.code==='INVALID_MEDIA_RELATIONSHIP');
+});
+
+test('the same original can be used in the body and as a cover without overwriting the body selection',async t=>{
+  const f=await fixture(t),u=await upload(f),input=request(f,u);delete input.selections[0].slot_id;
+  const plan=f.service.plan(f.draftId,input,'editor');
+  await f.service.confirm(f.draftId,{...input,confirmed:true,plan_hash:plan.plan_hash,idempotency_key:'same_photo_body_selection'},'editor');
+  const body=f.db.prepare('SELECT * FROM article_visuals WHERE id=?').get(plan.selections[0].slot_id);
+  input.expected_media_revision=1;input.selections[0].purpose='cover';
+  const cover=f.service.plan(f.draftId,input,'editor');assert.notEqual(cover.selections[0].slot_id,body.id);
+  await f.service.confirm(f.draftId,{...input,confirmed:true,plan_hash:cover.plan_hash,idempotency_key:'same_photo_cover_selection'},'editor');
+  assert.deepEqual(f.db.prepare('SELECT * FROM article_visuals WHERE id=?').get(body.id),body);
+  input.expected_media_revision=2;
+  assert.throws(()=>f.service.plan(f.draftId,input,'editor'),error=>error.code==='MEDIA_ALREADY_SELECTED');
+});
+
 test('T04-17 lower proxy chunk setting affects new sessions and preserves existing parts across restart',async t=>{
   const f=await fixture(t),bytes=Buffer.alloc(3*1024*1024,7);
   const input={expected_revision:2,name:'pending.png',mimeType:'image/png',size:bytes.length,sha256:mediaHash(bytes)};

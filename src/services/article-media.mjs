@@ -83,6 +83,7 @@ export class ArticleMediaService {
       total:this.db.prepare('SELECT COUNT(*) n FROM article_media_uploads WHERE draft_id=? AND actor=?').get(draftId,actor).n,
       items:this.db.prepare('SELECT * FROM article_media_uploads WHERE draft_id=? AND actor=? ORDER BY created_at,id LIMIT ? OFFSET ?').all(draftId,actor,limit,offset).map(row=>this.view(row)),
       slots:visualRows(this.db,draftId).map(row=>({id:row.id,slot:row.slot,caption:row.caption,status:row.status,error:row.last_error,
+        purpose:json(row.media_metadata_json).media_purpose || 'body',
         locked:Boolean(json(row.media_metadata_json).manual_article_selection?.locked),selection_id:json(row.media_metadata_json).manual_article_selection?.id || null,route:json(row.media_metadata_json).route_contract || null})),
       recovery:latest?{id:latest.id,state:latest.state,receipt:json(latest.receipt_json)}:null,
       approved_no_image:Boolean(this.db.prepare('SELECT approved_no_image FROM required_media_manifests WHERE draft_id=? AND revision=?').get(draftId,draft.revision)?.approved_no_image),
@@ -172,16 +173,25 @@ export class ArticleMediaService {
       if(!upload.asset_id || upload.draft_revision!==draft.revision)throw fail('MEDIA_UPLOAD_STALE','图片未保存或属于旧文章版本。');
       if(seen.has(upload.id))throw fail('DUPLICATE_SELECTION','同一图片只能确认一次。');seen.add(upload.id);
       if(!['body','cover'].includes(item.purpose)||!['photo','text','route','illustration'].includes(item.kind))throw fail('INVALID_MEDIA_PURPOSE','请选择用途和图片类型。',400);
-      const caption=String(item.caption || '').trim(),description=String(item.description || '').trim();
-      if(!caption || !description || caption.length>2000 || description.length>4000)throw fail('MEDIA_CONTEXT_REQUIRED','请填写准确的英文说明和文章关系。',400);
       const target=item.slot_id?rows.find(row=>row.id===item.slot_id):null;
       if(item.slot_id&&!target)throw fail('MEDIA_SLOT_STALE','目标槽位不存在。');
       if(target && (json(target.media_metadata_json).media_purpose || 'body')!==item.purpose)throw fail('MEDIA_PURPOSE_CONFLICT','封面与正文使用独立槽位，请为此用途新增槽位。');
-      const slotId=target?.id || `manual_visual_${upload.id}`;
+      const relationship=item.relationship || 'article_subject';
+      if(!['article_subject','context','illustration'].includes(relationship))throw fail('INVALID_MEDIA_RELATIONSHIP','请选择图片与文章的关系。',400);
+      if(target?.factual_image_required && (relationship!=='article_subject' || item.kind==='illustration'))
+        throw fail('MEDIA_SUBJECT_REQUIRED','此槽位需要文章对象的真实图片，请选择对象实拍或新增其他槽位。',400);
+      // Describe the editorial use, not unobserved pixels or a failed slot's
+      // imagined scene. An operator need not write English to adopt an image.
+      const kindLabel={photo:'photograph',text:'information image',route:'route image',illustration:'illustration'}[item.kind];
+      const caption=String(item.caption || '').trim() || `Editor-selected ${kindLabel} for this article.`;
+      const description=String(item.description || '').trim() || {article_subject:'Editor selected this image of the article subject.',context:'Editor selected this image as related context.',illustration:'Editor selected this image as an editorial illustration.'}[relationship];
+      if(caption.length>2000 || description.length>4000)throw fail('MEDIA_CONTEXT_TOO_LONG','图片说明超出长度限制。',400);
+      const slotId=target?.id || `manual_visual_${upload.id}_${item.purpose}`;
+      if(!target && rows.some(row=>row.id===slotId))throw fail('MEDIA_ALREADY_SELECTED','此图片已按该用途采用；请明确选择要替换的位置。');
       if(used.has(slotId))throw fail('DUPLICATE_SLOT','每个槽位只能选择一张图片。');used.add(slotId);
       const previous=target && json(target.media_metadata_json).manual_article_selection;
       if(previous?.locked && item.replace_selection_id!==previous.id)throw fail('MEDIA_LOCKED','替换已锁定图片需要确认当前选择。');
-      const local=item.kind==='photo' && item.no_reader_text===true && item.factual_photo===true && !/[\u3400-\u9fff]/u.test(caption);
+      const local=item.kind==='photo' && relationship!=='illustration' && item.no_reader_text!==false && item.factual_photo!==false && !/[\u3400-\u9fff]/u.test(caption);
       const routeDecision=manualRouteMediaDecision(route,item,target?json(target.media_metadata_json).route_contract:null);
       if(item.route_action && item.route_action!=='recompose_approved')throw fail('INVALID_ROUTE_ACTION','未知路线媒体操作。',400);
       if(item.route_action==='recompose_approved') {
@@ -202,7 +212,7 @@ export class ArticleMediaService {
       if(route && routeDecision && !routeDecision.blocked){this.repository.assertDraftRouteCurrent(draftId);validateRouteDraft(route,draft);}
       return {upload_id:upload.id,asset_id:upload.asset_id,slot_id:slotId,replaces:target?.id || null,purpose:item.purpose,kind:item.kind,
         ...(item.kind==='route'?{route_day_id:item.route_day_id || null,embedded_day_label:item.embedded_day_label || ''}:{}),
-        caption,description,anchor:target?.placement || (['after_intro','mid_article','before_faq','closing'].includes(item.anchor)?item.anchor:'after_intro'),
+        caption,description,relationship,anchor:target?.placement || (['after_intro','mid_article','before_faq','closing'].includes(item.anchor)?item.anchor:'after_intro'),
         local_photo:local,quality_confirmed:item.quality_confirmed===true,route_blocked:Boolean(routeDecision?.blocked),route_decision:routeDecision,
         original_hash:json(upload.receipt_json).sha256};
     });

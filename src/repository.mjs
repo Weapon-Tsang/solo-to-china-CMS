@@ -3603,6 +3603,42 @@ export class Repository {
     };
   }
 
+  opportunityMediaReadiness(opportunity,{assetCache=null,fileCache=null}={}) {
+    const coverage=json(opportunity.coverage_json,{});
+    if(!requiresOriginalBodyMedia(opportunity.strategy_version)) return {ready:true,status:'legacy_policy',assetIds:[]};
+    const brief={destination_slug:opportunity.destination_slug,topic:opportunity.title,
+      target_entities:coverage.proposal?.targetEntities || [],evidence_ledger_json:JSON.stringify(coverage.selectedFactKeys || []),
+      canonical_json:JSON.stringify({content_type:opportunity.content_type})};
+    const policy=contentPolicyFor(brief);
+    const proposalDraft={id:`proposal_${opportunity.id}`,title:opportunity.title,strategy_version:opportunity.strategy_version};
+    const assets=this.authorizedSourceAssetsForBrief(brief,{additionalSourceIds:uniqueStrings([
+      opportunity.source_id,...json(opportunity.source_ids_json,[]),...(coverage.selectedSourceIds || [])],10_000),limit:1000,includeRouteEvidence:false,includeClaimContext:false,assetCache,
+      candidateFilter:asset=>!assetUnsafeForFocusedAttraction(asset,brief,policy,proposalDraft)
+        && bodyFallbackCapability(asset,true).usable});
+    // Reuse the production selector, including subject relevance, current
+    // captures, original-photo quality and focused-attraction collage exclusions.
+    // A fact mentioning the attraction is not evidence that a photo depicts it.
+    const readable=assets.filter(asset=>{
+      if(fileCache?.has(asset.local_path))return fileCache.get(asset.local_path);
+      let valid=false;
+      try{const stat=fs.statSync(asset.local_path);valid=stat.isFile() && stat.size>0;}catch{ /* missing retained original */ }
+      fileCache?.set(asset.local_path,valid);return valid;
+    });
+    const factKeys=coverage.selectedFactKeys || [];
+    const facts=factKeys.length?this.knowledgeForDestination(opportunity.destination_slug,{normalizedKeys:factKeys}):[];
+    const supportedScope=[...(coverage.proposal?.targetEntities || []),...facts.map(fact=>`${fact.canonical_subject || fact.subject || ''} ${fact.preferred_value || ''}`)].join('\n');
+    // A broad preparation guide can illustrate a subject from its selected
+    // facts even before the writer names that section in the final title.
+    // Focused attraction guides keep their exact named-object constraint.
+    const mediaTitle=policy.content_type==='attraction_guide'?proposalDraft.title:`${proposalDraft.title}\n${supportedScope}`;
+    const visuals=normalizeVisuals([],{...proposalDraft,title:mediaTitle,body_markdown:supportedScope},brief,readable,policy);
+    const assetIds=uniqueStrings(visuals.filter(v=>v.source_asset_id&&!v.media_metadata?.required_visual_gap).map(v=>v.source_asset_id));
+    return {version:1,ready:assetIds.length>0,status:assetIds.length?'available':assets.retrieval?.has_more?'inventory_incomplete':'missing',
+      assetIds,inventoryCount:assets.retrieval?.inventory_count || 0,candidateCount:assets.length,readableCount:readable.length,
+      reason:assetIds.length?'已有与文章对象相关的可用原图；后续仍需槽位和交付审核。':'尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。',
+      validation:'current records, retained readable bytes and production media selection; not final publication QA'};
+  }
+
   reconcileRecommendationInbox(destinationSlug = null) {
     // Historical approvals can retain an ACTIONABLE inbox flag after the
     // lifecycle moves to Content. Clear that stale projection before grouping
@@ -3626,29 +3662,33 @@ export class Repository {
       FROM content_opportunities o LEFT JOIN content_recommendations r ON r.id=o.recommendation_id
       WHERE ${clauses.join(" AND ")} ORDER BY o.updated_at DESC,o.id`).all(...values);
     const sourceStateCache=new Map();
+    const mediaContext={assetCache:new Map(),fileCache:new Map()};
     const cachedSourceState=(sourceId,requireDiagnostic) => {
       const key=`${sourceId}:${requireDiagnostic ? "diagnostic" : "base"}`;
       if (!sourceStateCache.has(key)) sourceStateCache.set(key,this.sourceProcessingState(sourceId,{requireDiagnostic}));
       return sourceStateCache.get(key);
     };
     const evaluated=rows.map((row) => {
+      const versionCurrent=row.strategy_version===this.strategyVersion
+        && (!row.recommendation_strategy_version || row.recommendation_strategy_version===this.strategyVersion);
       const sourceIds=uniqueStrings([
         row.source_id,...json(row.source_ids_json,[]),...(json(row.coverage_json,{}).selectedSourceIds || []),
       ],10_000);
       const requireDiagnostic=Boolean(row.recommendation_id);
-      const sourceStates=sourceIds.map((sourceId) => ({sourceId,...cachedSourceState(sourceId,requireDiagnostic)}));
-      const versionCurrent=row.strategy_version===this.strategyVersion
-        && (!row.recommendation_strategy_version || row.recommendation_strategy_version===this.strategyVersion);
+      // Superseded strategy records cannot enter the inbox. Re-reading every
+      // historical source for them made current recommendation checks take minutes.
+      const sourceStates=versionCurrent?sourceIds.map((sourceId) => ({sourceId,...cachedSourceState(sourceId,requireDiagnostic)})):[];
       const processingGaps=sourceStates.filter((item) => item.state==="PROCESSING_GAP");
       const readiness=json(row.readiness_json,{});
-      const processingState=!versionCurrent || processingGaps.length ? "PROCESSING_GAP" : readiness.ready ? "CURRENT" : "EVIDENCE_GAP";
+      const media=versionCurrent && !processingGaps.length && readiness.ready ? this.opportunityMediaReadiness(row,mediaContext) : null;
+      const processingState=!versionCurrent || processingGaps.length ? "PROCESSING_GAP" : readiness.ready && media?.ready ? "CURRENT" : "EVIDENCE_GAP";
       const lesson=row.lifecycle_state==="recommended_again" && row.last_failure_lesson_id
         ? this.db.prepare("SELECT retry_safe,status,remediation_rule,category FROM failure_lessons WHERE id=?").get(row.last_failure_lesson_id) : null;
       const retryEligible=row.lifecycle_state!=="recommended_again"
         || Boolean(lesson?.retry_safe && lesson?.status==="active" && String(lesson?.remediation_rule || "").trim());
       const eligible=versionCurrent && processingState!=="PROCESSING_GAP" && retryEligible
-        && row.seo_action!=="SKIP" && !['knowledge_only','cluster','research_required','ignored','suppressed'].includes(row.status);
-      return {row,sourceIds,sourceStates,processingState,processingGaps,versionCurrent,retryEligible,eligible,
+        && (!media || media.ready) && row.seo_action!=="SKIP" && !['knowledge_only','cluster','research_required','ignored','suppressed'].includes(row.status);
+      return {row,sourceIds,sourceStates,processingState,processingGaps,media,versionCurrent,retryEligible,eligible,
         canonicalIntentKey:canonicalIntentKeyForOpportunity(row),lesson};
     });
     const groups=groupRecommendationIntents(evaluated.filter((entry) => entry.eligible));
@@ -3669,7 +3709,7 @@ export class Repository {
           : !item.eligible ? "INTERNAL" : primaryId===item.row.id ? "ACTIONABLE" : "MERGED";
         const detail={versionCurrent:item.versionCurrent,gaps:item.processingGaps.map((entry) => ({sourceId:entry.sourceId,gaps:entry.gaps})),
           nextOwner:item.processingState==="PROCESSING_GAP" ? "system" : item.processingState==="EVIDENCE_GAP" ? "editor" : "editor",
-          retryEligible:item.retryEligible};
+          retryEligible:item.retryEligible,media:item.media};
         const detailJson=JSON.stringify(detail); const mergedPrimary=inboxState==="MERGED" ? primaryId : null;
         const changed=item.row.processing_state!==item.processingState || item.row.processing_detail_json!==detailJson
           || item.row.canonical_intent_key!==item.canonicalIntentKey || item.row.inbox_state!==inboxState
@@ -3690,6 +3730,7 @@ export class Repository {
       internalOpportunities:activeEvaluated.length,
       actionableInbox:[...primaries.values()].length,
       processingGap:stateCounts("PROCESSING_GAP"),evidenceGap:stateCounts("EVIDENCE_GAP"),current:stateCounts("CURRENT"),
+      mediaGap:activeEvaluated.filter(item=>item.media&&!item.media.ready).length,
       merged:evaluated.filter((item) => item.eligible && primaries.get(item.canonicalIntentKey)!==item.row.id).length,
       superseded:evaluated.filter((item) => !item.versionCurrent || !item.retryEligible || item.row.seo_action==="SKIP").length,
     };
@@ -3711,7 +3752,7 @@ export class Repository {
         const readiness=json(row.readiness_json,{}); const previousFailure=json(row.previous_failure_json,{});
         return { ...row,readiness,coverage:json(row.coverage_json,{}),publicationImpact:json(row.publication_impact_json,{}),
           processingDetail:json(row.processing_detail_json,{}),previousFailure,
-          displayStatus:row.lifecycle_state==="recommended_again" ? "建议重新生产" : row.processing_state==="EVIDENCE_GAP" ? "等待关键证据" : "素材就绪",
+          displayStatus:row.lifecycle_state==="recommended_again" ? "建议重新生产" : row.processing_state==="EVIDENCE_GAP" ? "等待关键证据" : "事实与配图候选就绪",
           productionTypeLabel:recommendationProductionTypeLabel(row),
           recommendationReason:recommendationPlainReason(row,readiness),
           previousFailureSummary:previousFailure.category ? productionFailureChineseSummary(previousFailure) : null };
@@ -3736,6 +3777,8 @@ export class Repository {
       return { opportunityId, decision, status:"skipped", queued:false, candidateId:opportunity.candidate_id || null };
     }
     if (opportunity.inbox_state !== "ACTIONABLE" || opportunity.processing_state === "PROCESSING_GAP") {
+      if(decision==='approve' && json(opportunity.processing_detail_json,{}).media?.ready===false)
+        throw conflictError('文章事实已就绪，但必备配图尚未就绪。请补齐相关原图后再批准。');
       throw conflictError("This opportunity is still being recalculated by the system and cannot receive an editorial decision yet.");
     }
     const timestamp = now();
@@ -3859,6 +3902,8 @@ export class Repository {
     }
     const readiness = json(opportunity?.readiness_json || opportunity?.coverage_json, {});
     const ready = Boolean(readiness.ready);
+    if(decision==='approved_article' && ready && !this.opportunityMediaReadiness(opportunity).ready)
+      throw conflictError('文章事实已就绪，但必备配图尚未就绪。请补齐相关原图后再批准。');
     const opportunityStatus = decision === "approved_article" ? ready ? "approved_ready" : "approved_waiting_for_evidence"
       : decision === "knowledge_only" ? "knowledge_only" : decision === "cluster" ? "cluster"
         : decision === "research_first" ? "research_required" : "ignored";
@@ -4188,6 +4233,12 @@ export class Repository {
     if (!readiness.ready) {
       this.db.prepare("UPDATE content_opportunities SET status='approved_waiting_for_evidence',updated_at=? WHERE id=?").run(now(), opportunityId);
       return { candidateId: null, queued: false };
+    }
+    // Unstarted historical approvals must pass the same live material gate.
+    // Existing production owners are recovered through their own media slots.
+    if(!opportunity.candidate_id && !this.opportunityMediaReadiness(opportunity).ready) {
+      this.db.prepare("UPDATE content_opportunities SET status='approved_waiting_for_evidence',updated_at=? WHERE id=?").run(now(),opportunityId);
+      return {candidateId:null,queued:false};
     }
     // Published-content overlap is represented as an explicit SEO action on the
     // opportunity. It never silently suppresses an approved editorial decision.
@@ -9219,7 +9270,7 @@ export class Repository {
     return { factId, action, status: hidden ? "hidden" : "visible", destinationSlug: fact.destination_slug };
   }
 
-  authorizedSourceAssetsForBrief(brief, { packet = null, additionalSourceIds = [], explicitAssetIds = [], includeUnavailable = false, limit = 160, offset = 0 } = {}) {
+  authorizedSourceAssetsForBrief(brief, { packet = null, additionalSourceIds = [], explicitAssetIds = [], includeUnavailable = false, includeRouteEvidence = true, includeClaimContext = true, assetCache = null, candidateFilter = null, limit = 160, offset = 0 } = {}) {
     const claimKeys = json(brief.evidence_ledger_json, []);
     // Media discovery and every input checkpoint need only this article's
     // evidence. Loading and decoding the whole destination on each lane wait
@@ -9293,10 +9344,11 @@ export class Repository {
       ORDER BY ${relationOrder} s.captured_at DESC,sa.position ASC,sa.id ASC LIMIT ? OFFSET ?`)
       .all(...parameters,...orderParameters,pageSize+1,pageOffset) : [];
     const hasMore=automatic.length>pageSize;
-    const assets=[...new Map([...selected,...automatic.slice(0,pageSize)].map(asset=>[asset.id,asset])).values()];
+    const inventory=[...new Map([...selected,...automatic.slice(0,pageSize)].map(asset=>[asset.id,asset])).values()];
+    const assets=candidateFilter?inventory.filter(asset=>candidateFilter(hydrateSourceAssetAnalysis(asset))):inventory;
     const byId=new Map(assets.map((asset)=>[asset.id,{asset,claims:new Map()}]));
     const evidenceSourceIds=[...new Set(assets.map((asset)=>asset.source_id))];
-    const evidence=assets.length ? this.db.prepare(`SELECT c.id,c.source_id,c.created_at,c.canonical_subject,c.subject,
+    const evidence=includeClaimContext && assets.length ? this.db.prepare(`SELECT c.id,c.source_id,c.created_at,c.canonical_subject,c.subject,
         c.predicate,c.value_text,es.asset_id FROM claims c
       JOIN json_each(c.evidence_span_ids_json) ids
       JOIN evidence_spans es ON es.id=ids.value
@@ -9310,7 +9362,7 @@ export class Repository {
     const routeSources=new Map();
     // Load only current extraction evidence for the small set of retrieved
     // sources. Writer-supplied route metadata is never evidence for an image.
-    for(const sourceId of new Set(assets.filter(asset=>['map_or_route','photo_collage','editorial_infographic'].includes(asset.asset_kind))
+    for(const sourceId of new Set(assets.filter(asset=>includeRouteEvidence && ['map_or_route','photo_collage','editorial_infographic'].includes(asset.asset_kind))
       .map(asset=>asset.source_id))) {
       const hasFragments=this.db.prepare(`SELECT 1 FROM experience_extraction_runs er JOIN sources s
         ON s.id=er.source_id AND s.capture_version=er.capture_version
@@ -9322,16 +9374,19 @@ export class Repository {
       routeSources.set(sourceId,json(row?.route_fragments_json,[]));
     }
     const result=assets.map((asset)=>{
+      if(!includeRouteEvidence && assetCache?.has(asset.id))return assetCache.get(asset.id);
       const claims=[...byId.get(asset.id).claims.values()];
-      return {...hydrateSourceAssetAnalysis({...asset,
+      const hydrated={...hydrateSourceAssetAnalysis({...asset,
         evidence_subject:claims.length ? (claims[0].canonical_subject || claims[0].subject || '') : '',
         evidence_text:claims.map((claim)=>[claim.canonical_subject,claim.subject,
           claim.predicate,claim.value_text].join(' ')).join(' ')}),source_bindings:readMediaBindings(this.db,asset.id),
         source_binding_issues:readMediaBindingIssues(this.db,asset.id),
         route_source_fragments:asset.capture_version===asset.source_capture_version ? routeSources.get(asset.source_id) : []};
+      if(!includeRouteEvidence)assetCache?.set(asset.id,hydrated);
+      return hydrated;
     });
     result.retrieval={has_more:hasMore,offset:pageOffset,next_offset:hasMore ? pageOffset+pageSize : null,
-      automatic_limit:pageSize,explicit_count:selected.length,returned_count:result.length,
+      automatic_limit:pageSize,explicit_count:selected.length,returned_count:result.length,inventory_count:inventory.length,
       inventory_aliases_has_more:inventoryNames.length>32,
       scope:'bounded_entity_and_source_inventory',entity_keys:entityKeys,source_ids:sourceIds,
       missing_explicit_ids:selectedAssetIds.filter(id=>!selected.some(asset=>asset.id===id))};
@@ -11111,13 +11166,9 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     .filter((asset)=>!unsafeAttractionAssetIds.has(asset.id))
     .map((asset) => {
       const subject=readerVisualAlt(asset,"",brief.destination_slug);
-      const decision=decideVisualAsset(asset,{image_subject:subject,purpose:`Evidence-linked view supporting ${draft.title}`});
-      const freeOriginal=decision.action === 'retain' && asset.local_photo_audit?.status === 'eligible'
-        && asset.local_photo_audit.sha256 === asset.original_sha256 && hasImageLevelDescription(asset);
-      const usefulTranslation=decision.action === 'localize' && asset.analysis_status === 'ready'
-        && (decision.translateRegionIds?.length > 0 || /^(?:zh|chinese|mixed)/i.test(asset.language_status || ''));
+      const {decision,usable}=bodyFallbackCapability(asset,freeOriginalPolicy,{image_subject:subject,purpose:`Evidence-linked view supporting ${draft.title}`});
       return {asset,decision,score:articleAssetMatchScore(draft,brief,asset),
-        usable:!freeOriginalPolicy || freeOriginal || usefulTranslation};
+        usable};
     })
     .filter((entry)=>entry.usable)
     .filter((entry) => entry.score >= articleFallbackMinimum)
@@ -11335,6 +11386,15 @@ function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
     .replace(/\b[a-z]/g,(character)=>character.toUpperCase());
   const suffix = destination && !subject.toLowerCase().includes(destination.toLowerCase()) ? ` in ${destination}` : "";
   return truncateText(`Photo of ${subject}${suffix}.`,220);
+}
+
+function bodyFallbackCapability(asset,freeOriginalPolicy,request={}) {
+  const decision=decideVisualAsset(asset,request);
+  const freeOriginal=decision.action==='retain' && asset.local_photo_audit?.status==='eligible'
+    && asset.local_photo_audit.sha256===asset.original_sha256 && hasImageLevelDescription(asset);
+  const usefulTranslation=decision.action==='localize' && asset.analysis_status==='ready'
+    && (decision.translateRegionIds?.length>0 || /^(?:zh|chinese|mixed)/i.test(asset.language_status || ''));
+  return {decision,usable:!freeOriginalPolicy || freeOriginal || usefulTranslation};
 }
 
 function hasImageLevelDescription(asset) {

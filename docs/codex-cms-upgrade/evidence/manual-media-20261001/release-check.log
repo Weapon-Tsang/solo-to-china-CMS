@@ -1,0 +1,115 @@
+(node:11324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+========================================
+SoloToChina Release Check
+Version: 2.0.79
+========================================
+
+
+Environment
+PASS       Node runtime
+PASS       Dependencies installed
+
+Code
+PASS       Static checks and Vite production build — 8412 ms
+PASS       Unit and integration tests — 110486 ms
+
+Performance
+WARNING    Unit-test duration budget — 110486 ms exceeded the 30000 ms warning budget; correctness still passed.
+
+Code
+PASS       Fixed-SHA Frontend Contract gate — 1524 ms
+
+Database
+PASS       Version alignment and clean migration chain — 650 ms
+
+Quality Dimensions
+PASS       Schema syntax and contract structure — Offline schema, migration, and negative-fixture tests executed.
+PASS       Visible content and factual relationships — Evidence/provenance validators and content integration fixtures executed.
+PASS       CMS/Frontend contract compatibility — Frontend b231b1d54915ceef6a7f52b907ba5d7c1d79463d executed.
+PASS       content_quality — passed
+PASS       seo_artifact — passed
+PASS       structured_data — passed
+PASS       rendered_html — passed; fixed fixture only
+PASS       crawler_configuration — passed
+NOT TESTED production_cost — No paid model or production request was made by the offline fixture.
+PASS       Fixed published HTML fixture
+
+Technical Accessibility
+NOT TESTED Production WordPress/theme HTML and crawler response — Requires a fixed Frontend SHA deployed in a real WordPress/theme environment; the CMS fixture is not production proof.
+
+Build
+PASS       dist directory
+PASS       dist/index.html
+PASS       Frontend entrypoint
+PASS       JavaScript assets
+PASS       CSS assets
+
+Server
+PASS       Server process started — PID 14112 captured
+PASS       HTTP listener ready — health endpoint responded on port 61525
+
+API
+PASS       /api/health — 200 JSON, ok=true, version aligned
+PASS       /api/ready — 200 JSON, ready=true
+PASS       Dashboard API — 200 JSON
+PASS       System strategy API — 200 JSON
+PASS       Sources API — 200 JSON
+PASS       Knowledge API — 200 JSON
+PASS       Editorial blueprints API — 200 JSON
+PASS       Content API — 200 JSON
+PASS       Recommendations API — 200 JSON
+PASS       WordPress inventory API — 200 JSON
+PASS       Search Console API — 200 JSON
+PASS       Commercial offers API — 200 JSON
+PASS       Affiliate Provider/Asset API — 200 JSON
+PASS       Exception queue scan — 200 JSON
+PASS       Maintenance API — 200 JSON
+PASS       Unknown route handling — 404 JSON without server failure
+PASS       Capture write/read smoke — temporary source insert, revision update, and detail read succeeded
+
+Web UI
+PASS       GET / — 200 HTML with React root
+PASS       Referenced JS/CSS assets — 2 production asset(s) returned 200
+
+Database
+PASS       Temporary SQLite database — schema, migrations, capture insert/update/select, foreign keys, and integrity verified
+
+Backup
+PASS       System snapshot restore drill — 1 hashed file(s), 0 database reference(s), external side effects disabled
+
+Logs
+PASS       Server stdout/stderr captured — 6822 stdout bytes, 169 stderr bytes
+PASS       No fatal server exceptions
+
+Database
+PASS       Temporary database cleanup — Removed isolated release-check data.
+
+Chrome Extension
+PASS       Manifest JSON
+PASS       Permissions and local Engine host
+PASS       Referenced extension assets
+PASS       Durable repair scheduler
+
+External Services
+WARNING    Kimi — Not called; the isolated server runs without KIMI_API_KEY.
+WARNING    WordPress production — Not called; the isolated server runs without WordPress credentials.
+WARNING    Search Console production — Not called; the isolated server runs without Google credentials.
+
+Chrome Extension
+NOT TESTED Real Chrome Load Unpacked — Requires a human Chrome profile and an explicit user click.
+NOT TESTED Real Xiaohongshu capture — Requires a user-selected, already-open note in a real tab.
+
+Search Outcomes
+NOT TESTED Rankings, traffic, indexing, and AI citations — Not verifiable in offline CI and never inferred from schema or content checks.
+
+Logs
+WARNING    Node SQLite ExperimentalWarning — Known Node runtime warning; it is recorded but not treated as a release failure.
+
+========================================
+RESULT: OFFLINE RELEASE GATE PASSED
+Mandatory checks: 50 passed
+Warnings: 5
+Not tested/unconfigured: 5
+Failures: 0
+========================================

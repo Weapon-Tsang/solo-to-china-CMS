@@ -250,6 +250,9 @@ for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`
     facts:db.prepare('SELECT normalized_key,consensus_status FROM knowledge_facts').all(),
     failures:db.prepare("SELECT type,status,last_error FROM jobs WHERE status IN ('failed','queued','running')").all()}));
   const adaptationPath = editorialOpportunity ? {opportunity_id:editorialOpportunity.id} : recommendation.production_paths.find((path) => path.mode === "SOURCE_ADAPTATION");
+  const mediaProposal=db.prepare('SELECT * FROM content_opportunities WHERE id=?').get(adaptationPath.opportunity_id);
+  assert.equal(repository.opportunityMediaReadiness(mediaProposal).ready,true,
+    'a broad guide may use a pixel-described metro photo supported by its selected facts before the final writer slot exists');
   const approval = editorialOpportunity ? repository.decideOpportunity(editorialOpportunity.id,'approve')
     : repository.decideRecommendation(recommendation.id, "approved_article", "", { opportunityId: adaptationPath.opportunity_id });
   assert.equal(approval.opportunityId, adaptationPath.opportunity_id);

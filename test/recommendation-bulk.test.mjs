@@ -5,16 +5,17 @@ import { normalizeXiaohongshuCapture } from '../src/adapters/xiaohongshu.mjs';
 import { decideRecommendationCommand, decideRecommendationsBulk } from '../src/services/recommendation-bulk.mjs';
 import { createApplication } from '../src/server.mjs';
 import { loadConfig } from '../src/config.mjs';
+import {seedOpportunityPhoto} from '../test-support/opportunity-media-fixture.mjs';
 
 function fixture(t, count=2) {
-  const {db,repository}=repositoryFixture(t);
+  const {db,repository,directory}=repositoryFixture(t);
   for(let i=0;i<count;i++) {
     const source=repository.saveCapture(normalizeXiaohongshuCapture({url:`https://www.xiaohongshu.com/explore/${(100+i).toString(16).padStart(24,'a')}`,title:`Note ${i}`,text:`Independent captured evidence ${i} for a Chongqing walk.`}));
     repository.saveExtraction(source.id,{source:{language:'en',summary:'Fixture',destination_name:'Chongqing',destination_slug:'chongqing',traveler_fit:[],practical_tips:[],warnings:[],confidence:0.9},claims:[],blueprint:{format:'guide',hook:'Walk',angle:'Local',sections:[],strengths:[],gaps:[]}},'test','fixture');
     repository.saveIntakeAnalysis(source.id,{classification:'ARTICLE_CANDIDATE',production_mode:'TOPIC_FEATURE',primary_topic:`Walk ${i}`,suggested_article_title:`Walk ${i}`,suggested_content_type:'itinerary',confidence:0.9,article_potential:90,information_density:90,topic_completeness:90,reasoning_summary:'Fixture',production_paths:[{mode:'SOURCE_ADAPTATION',title:`Narrow walk ${i}`,content_type:'itinerary',reader_promise:'Follow a short walk',why_it_works:'Bounded',evidence_boundary:'Source only'}]},'fixture');
   }
   const items=repository.listContentRecommendations();
-  return {db,repository,items};
+  return {db,repository,items,directory};
 }
 const input=item=>({recommendationId:item.id,updatedAt:item.updated_at,opportunityId:item.opportunity_id});
 
@@ -65,9 +66,11 @@ test('a failed item rolls back its own mutation without rolling back successful 
   assert.equal(db.prepare('SELECT decision FROM content_recommendations WHERE id=?').get(items[1].id).decision,'pending');
 });
 
-test('ready approval creates one planning job and retry cannot create a second job',t=>{
-  const {db,repository,items}=fixture(t,1);
+test('ready approval creates one planning job and retry cannot create a second job',async t=>{
+  const {db,repository,items,directory}=fixture(t,1);
   const item=items[0];
+  const opportunity=db.prepare('SELECT * FROM content_opportunities WHERE id=?').get(item.opportunity_id);
+  await seedOpportunityPhoto(repository,directory,{sourceId:opportunity.source_id,subject:opportunity.title});
   // This test isolates command/queue semantics, not factual readiness quality.
   db.prepare('UPDATE content_opportunities SET readiness_json=? WHERE id=?').run(JSON.stringify({ready:true,score:80,factCount:5,sourceFamilyCount:1}),item.opportunity_id);
   const payload={decision:'approved_article',items:[input(item)]};

@@ -1,0 +1,36 @@
+{
+  "change_class": ["DATABASE_LOGIC", "PIPELINE", "UI_ONLY"],
+  "mode": "DEVELOPMENT",
+  "L1_targeted_tests": "PASS",
+  "L2_module_regression": {"status": "PASS", "tests": 121},
+  "build_and_check": "PASS",
+  "L3_production_db_replay": {
+    "status": "PASS",
+    "scope": "Retained 2026-10-01 production-copy baseline, disposable work database, 147 SHA-verified retained originals. Exact two owners simulated as pre-approval records in rollback transaction. No new production read or write.",
+    "two_opportunities_fact_score": 94,
+    "two_opportunities_media_ready": false,
+    "approval_attempts": "blocked",
+    "protected_persistent_tables": "unchanged"
+  },
+  "L4_browser_e2e": {
+    "status": "PASS",
+    "scope": "Local authenticated fixture: file upload, choice-only body adoption, same original selected as separate cover, final confirmation, refresh/reopen with media revision 2 retained. Cover still requires its existing geometry selection; final publishing was not exercised.",
+    "console_errors": 0,
+    "screenshot": "selection-only-form.png"
+  },
+  "L5_real_provider_canary": "NOT REQUIRED",
+  "L6_full_production_replay": "NOT REQUIRED",
+  "post_fix_exploratory_audit": {
+    "status": "ISSUES FOUND",
+    "scope": "46 old fact-ready inbox proposals in retained baseline",
+    "no_qualified_media_candidate": 31,
+    "qualified_candidates_but_local_originals_unavailable": 13,
+    "limitation": "The 13 locally unavailable cases do not establish missing bytes in production. This is a readiness audit, not a full pipeline audit."
+  },
+  "not_tested": ["production deployment", "production WordPress writes", "real AI generation", "complete pipeline replay"],
+  "production_writes": 0,
+  "provider_calls": 0,
+  "git_commit": false,
+  "git_push": false,
+  "cleanup": "Automatic approval policy rejected deletion of abandoned disposable replay files; files retained."
+}

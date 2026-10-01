@@ -1,0 +1,748 @@
+{
+  "status": "PASS",
+  "sourceSnapshot": "2026-10-01 retained production-copy baseline; no new production read",
+  "baselineHash": "91d01c9d85d46737228acc56fcb8f8190580057eac61bc1a1634b6f7a50bea5e",
+  "originalsShaVerified": 147,
+  "results": [
+    {
+      "id": "opportunity_fcecf32653daa8ffdf506461",
+      "title": "Chongqing Zoo: The Morning Window for Panda Activity",
+      "factCoverage": 94,
+      "factsReady": true,
+      "media": {
+        "version": 1,
+        "ready": false,
+        "status": "missing",
+        "assetIds": [],
+        "inventoryCount": 207,
+        "candidateCount": 0,
+        "readableCount": 0,
+        "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+        "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+      }
+    },
+    {
+      "id": "opportunity_efe45dfd5dcb7a856b1bd72e",
+      "title": "Luo Zhongli Art Museum: Two-Day Booking Rule and Monday Closure",
+      "factCoverage": 94,
+      "factsReady": true,
+      "media": {
+        "version": 1,
+        "ready": false,
+        "status": "missing",
+        "assetIds": [],
+        "inventoryCount": 38,
+        "candidateCount": 0,
+        "readableCount": 0,
+        "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+        "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+      }
+    }
+  ],
+  "neighborAudit": {
+    "factReadyInbox": 46,
+    "missingMedia": 44,
+    "locallyUnverifiable": 13,
+    "items": [
+      {
+        "id": "opportunity_716a5d141a6a239055100d06",
+        "title": "Yangtze River Cableway: Boarding from Shangxinjie to Halve the Queue",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 573,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_0ad2ce3a8a6125aa07ee8be4",
+        "title": "Chongqing on Foot: Navigating 3D Topography and Stairway Routes",
+        "media": {
+          "version": 1,
+          "ready": true,
+          "status": "available",
+          "assetIds": [
+            "asset_9a28021dff994823ae2e7558bad0b25f",
+            "asset_ee03a294e253445a906b078eacda64eb"
+          ],
+          "inventoryCount": 385,
+          "candidateCount": 51,
+          "readableCount": 35,
+          "reason": "已有与文章对象相关的可用原图；后续仍需槽位和交付审核。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_63741cdbcc24d068a80ed4b6",
+        "title": "Ordering Snacks on Bayi Food Street Without Overpaying",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 91,
+          "candidateCount": 25,
+          "readableCount": 19,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_404fe8f839bcdc3a1feb3678",
+        "title": "Chongqing People's Great Hall: Exterior Photography Angles and Entry Rules",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 451,
+          "candidateCount": 1,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_5a774f3e78501542eccc707c",
+        "title": "Booking Two Days Ahead for Chongqing Science and Technology Museum",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 47,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_a64e2bc193cd35849e1b0c20",
+        "title": "Escaping Street-Level Liziba Crowds at Lansheng Pavilion",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 409,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_818e656fba04c4e2b8dc0e80",
+        "title": "Entering the East Gate for Longmenhao Old Street's Elevator Descent",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 501,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_60bd2915ac0d300e00e28516",
+        "title": "Taking the Downhill Route Along Chongqing's Mountain City Trail",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 240,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_27cc9866b7508401ad89614e",
+        "title": "Chongqing People's Great Hall: Pairing the Exterior with Three Gorges Museum",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 27,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_82b78ae8b12eb69366ef1b22",
+        "title": "Visiting Zhazidong: Reservation Rules and Monday Closure Planning",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 48,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_8ec6f2edbce6891c058b69bb",
+        "title": "What to Order at Yao Nao Ke Jiao Tou Mian",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 15,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_33d974454c4b1c06358fee16",
+        "title": "Sampling Before Buying at Cai Erye Spicy Duck in Hongyadong",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 84,
+          "candidateCount": 4,
+          "readableCount": 3,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_bf706557ceb333638d29f0d4",
+        "title": "Chen Popo Hotpot by the Yangtze River Cableway: Budget Dining Steps from Baixiangju",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 61,
+          "candidateCount": 4,
+          "readableCount": 3,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_84f4990225c7263aba39ce17",
+        "title": "Guoqiang Beef in Jiefangbei: QR Code Ticketing and Early Arrival for Beef-Only Stir-Fries",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 82,
+          "candidateCount": 10,
+          "readableCount": 4,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_64a76d9fb47cb83f8edde791",
+        "title": "Locating Rongjie Hotpot Main Branch in the Alleys of Qixinggang",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 48,
+          "candidateCount": 3,
+          "readableCount": 3,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_6b9d6f489d1593258ffffa9d",
+        "title": "Dining at Li Jie Hotpot in Daijia Lane: Managing Broth Heat Near Hongyadong",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 25,
+          "candidateCount": 3,
+          "readableCount": 3,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_d22d36a66a0ca5d1da179bdf",
+        "title": "Handmade Sweet Soups at Sanyangzi: Locations, Menu Highlights, and Delivery Options",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 25,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_54a1bdffa05db1b7c78ce113",
+        "title": "Walking from Bayi Food Street to Baixiangju in Under Twenty Minutes",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 23,
+          "candidateCount": 13,
+          "readableCount": 9,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_0eeab339033edb309b2f4797",
+        "title": "Connecting Guanyinqiao Food Street to the Footbridge Screen",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 46,
+          "candidateCount": 2,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_3966d91d0e5ce73b29cb7656",
+        "title": "Connecting Jiefangbei to Bayi Food Street on Foot",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 27,
+          "candidateCount": 12,
+          "readableCount": 12,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_4cfecd9c25082d1765de3ac3",
+        "title": "Navigating the Uphill Path from Shibati to Jiefangbei",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 46,
+          "candidateCount": 1,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_078c45219b5f636912dad8c5",
+        "title": "Walking Uphill from Taping to Beicang Cultural and Creative Park",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 46,
+          "candidateCount": 2,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_f7eba4a5be6f5d7adcb26b44",
+        "title": "Courtyard Dining at Yibiaochang Hotpot: In-House Specialties and Budget Expectations",
+        "media": {
+          "version": 1,
+          "ready": true,
+          "status": "available",
+          "assetIds": [
+            "asset_eaf1654851c644b4bfc38c3a9dfcbe02"
+          ],
+          "inventoryCount": 192,
+          "candidateCount": 14,
+          "readableCount": 11,
+          "reason": "已有与文章对象相关的可用原图；后续仍需槽位和交付审核。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_c62fec2122a79bceefd4de1e",
+        "title": "First Steps into Chongqing Dining: Starting with Classic Hotpot and Jianghu Cuisine",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 20,
+          "candidateCount": 1,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_26cbe18e93e46f0ade8ceb05",
+        "title": "Finding Guijing Old Hotpot Under Shapingba Residential Blocks",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 62,
+          "candidateCount": 2,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_0e137d8400069b312527cd4d",
+        "title": "Eating on Bayi Road: Street-Side Dining at Haoyoulai Hot and Sour Rice Noodles",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 26,
+          "candidateCount": 6,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_166b72ba6699617170b31d18",
+        "title": "Hand-Stirred Soup Bases at Jiu Hotpot: Branch Spots, Prices, and Table Picks",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 58,
+          "candidateCount": 11,
+          "readableCount": 4,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_7d4501eae4ea30fdaffee772",
+        "title": "Dining at Tianbangbang Hotpot in Jiefangbei",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 138,
+          "candidateCount": 7,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_e5bb3bebe9fbd09f4b5b3946",
+        "title": "A Quick Dessert Stop at Yuanma Hongdoutang",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 27,
+          "candidateCount": 2,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_2fc97d1d4806a217878a9158",
+        "title": "Dining at Guanyinqiao’s 32-Year-Old Yuanman Old Hotpot",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 45,
+          "candidateCount": 11,
+          "readableCount": 4,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_c4bd58c04b464f3b611ef3b6",
+        "title": "Walking Times from Baixiangju to Huguang Guild Hall",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 24,
+          "candidateCount": 5,
+          "readableCount": 4,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_3a9b0ac6ba1aae5906518663",
+        "title": "Walking from Eling Testbed 2 to Liziba Without Reversing Course",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 35,
+          "candidateCount": 10,
+          "readableCount": 10,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_46a8c101a28526c5505f4e89",
+        "title": "Walking from Eling Park to Liziba on Foot",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 23,
+          "candidateCount": 1,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_b6d76020b5750a8555919348",
+        "title": "Walking Between Eling Park and Eling TESTBED2",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 45,
+          "candidateCount": 2,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_9f416267fc7563527fd5e7c5",
+        "title": "Foot Transit Times Between Eling Testbed 2 and Liziba",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 58,
+          "candidateCount": 11,
+          "readableCount": 9,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_79d902be32942d0080560532",
+        "title": "Connecting Graffiti Street to Jiaotong Teahouse on Foot",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 23,
+          "candidateCount": 13,
+          "readableCount": 13,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_7cde5a1838fd92ce85d9054f",
+        "title": "Connecting Huguang Guild Hall to Raffles City on Foot",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 33,
+          "candidateCount": 6,
+          "readableCount": 4,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_598f70bef3bcd07ce200a1ce",
+        "title": "Navigating from Jiefangbei to Kuixinglou via Underground Passage Entrance A2",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 41,
+          "candidateCount": 1,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_5c6bb651906e56a05f8f60f5",
+        "title": "Walking from Kuixinglou to Hongyadong Ferry via the Parking Garage Passage",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 41,
+          "candidateCount": 1,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_58859b9b47c6b14818a32c6b",
+        "title": "Taking CRT Between Liziba and Guanyinqiao: Transit Duration Windows",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 30,
+          "candidateCount": 10,
+          "readableCount": 9,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_570ab4e2a6b7a8a38c24adb4",
+        "title": "Connecting Shancheng Alley to Shibati via the Underground Passage",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 33,
+          "candidateCount": 10,
+          "readableCount": 5,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_6d1f7edbcb8dd30363982f6f",
+        "title": "Walking from Shancheng Trail to Shibati: Transfer Time Expectations",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 68,
+          "candidateCount": 16,
+          "readableCount": 15,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_eea1ede53284712f66ff8277",
+        "title": "Walking Between Shancheng Walkway and Shibati",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 38,
+          "candidateCount": 5,
+          "readableCount": 4,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_7b15e8d60650fb9156f51773",
+        "title": "Shibati to Huguang Guild Hall: Comparing Light Rail and Walking Durations",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 24,
+          "candidateCount": 12,
+          "readableCount": 12,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_0ff0ed026b72a95cb5fadb72",
+        "title": "Connecting Zhazhidong and Baigongguan: 15-Minute Walking and Bus Transit Times",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 23,
+          "candidateCount": 13,
+          "readableCount": 13,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_43b17fd506f8035ebeead89c",
+        "title": "Tracking Down Xiao Huang Hotpot in the Alleys of Jiefangbei",
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 34,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      }
+    ]
+  },
+  "scope": "Production selector plus real retained bytes; pre-approval lifecycle replay in rollback transaction. No AI or complete production pipeline.",
+  "protectedTablesUnchanged": true,
+  "productionWrites": 0,
+  "providerCalls": 0
+}

@@ -1,6 +1,6 @@
-# 2.0.78 Required source-photo recovery
+# 2.0.79 Manual image choices and recommendation media readiness
 
-App/Extension version `2.0.78`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Same-schema CODE_ONLY_RELEASE. See `codex-cms-upgrade/acceptance/media-completion-followup-20261001.md` for deterministic, production-copy and real production verification, including any missing original-photo inputs.
+App/Extension version `2.0.79`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Same-schema CODE_ONLY_RELEASE. Manual image adoption uses choices without required English prose, with independent body and cover slots. Fact-ready recommendations now require related usable original-media candidates and are revalidated before approval. See `codex-cms-upgrade/evidence/manual-media-20261001/acceptance.json` for scoped development verification; production release results are recorded separately after rollout.
 
 # 2.0.77 Image recognition timeout recovery
 
