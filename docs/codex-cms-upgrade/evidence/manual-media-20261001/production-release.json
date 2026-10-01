@@ -1,0 +1,204 @@
+{
+  "status": "PASS",
+  "version": "2.0.79",
+  "releaseClass": "CODE_ONLY_RELEASE",
+  "revision": "5abf663aee21ce66e606570b1d8134653e018d5b",
+  "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:86a4f2812e37ff6fe5dfbaeebfd08b26903e289353412ee6d7141689642ac62a",
+  "production": {
+    "phase": "after",
+    "database": {
+      "schema": 83,
+      "drafts": {
+        "count": 16,
+        "sha256": "6be05d2f72b4066905ff4e2e14e1c5e8ef19f9f7e0c0fc7ed8973519921624a4"
+      },
+      "publications": {
+        "count": 14,
+        "sha256": "231b7c56f8c7d31942f93edc189a2123fad496c728d7179780279f7aa7ade87f"
+      },
+      "activeJobs": [],
+      "orphanActiveOwners": [],
+      "duplicateActiveOwners": []
+    },
+    "containers": [
+      {
+        "name": "/engine",
+        "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:86a4f2812e37ff6fe5dfbaeebfd08b26903e289353412ee6d7141689642ac62a",
+        "running": true,
+        "restarts": 0,
+        "oom": false,
+        "runtime": {
+          "APP_REVISION": "5abf663aee21ce66e606570b1d8134653e018d5b",
+          "CMS_PROCESS_ROLE": "api",
+          "CMS_STARTUP_RECONCILIATION_ENABLED": "false"
+        }
+      },
+      {
+        "name": "/engine-worker",
+        "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:86a4f2812e37ff6fe5dfbaeebfd08b26903e289353412ee6d7141689642ac62a",
+        "running": true,
+        "restarts": 0,
+        "oom": false,
+        "runtime": {
+          "APP_REVISION": "5abf663aee21ce66e606570b1d8134653e018d5b",
+          "CMS_PROCESS_ROLE": "worker",
+          "CMS_STARTUP_RECONCILIATION_ENABLED": "false"
+        }
+      }
+    ],
+    "public": {
+      "health": {
+        "version": "2.0.79",
+        "ready": null,
+        "ok": true,
+        "database": null
+      },
+      "ready": {
+        "version": "2.0.79",
+        "ready": true,
+        "ok": null,
+        "database": "ready"
+      },
+      "capture": {
+        "version": "2.0.79",
+        "ready": null,
+        "ok": true,
+        "database": null
+      }
+    },
+    "draftsAndPublicationsPreserved": true
+  },
+  "candidateReadOnlyAudit": {
+    "status": "PASS",
+    "version": "2.0.79",
+    "productionDatabaseMode": "readOnly",
+    "volumeMode": "readOnly",
+    "network": "none",
+    "scope": "Final immutable candidate using real current database and original bytes; no reconciliation, queue mutation or provider dispatch",
+    "exactOwners": [
+      {
+        "id": "opportunity_fcecf32653daa8ffdf506461",
+        "title": "Chongqing Zoo: The Morning Window for Panda Activity",
+        "factCoverage": 94,
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 207,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      },
+      {
+        "id": "opportunity_efe45dfd5dcb7a856b1bd72e",
+        "title": "Luo Zhongli Art Museum: Two-Day Booking Rule and Monday Closure",
+        "factCoverage": 94,
+        "media": {
+          "version": 1,
+          "ready": false,
+          "status": "missing",
+          "assetIds": [],
+          "inventoryCount": 38,
+          "candidateCount": 0,
+          "readableCount": 0,
+          "reason": "尚无与文章对象匹配且质量可用的原图，暂不进入可批准建议。",
+          "validation": "current records, retained readable bytes and production media selection; not final publication QA"
+        }
+      }
+    ],
+    "neighbor": {
+      "factReady": 62,
+      "mediaReady": 21,
+      "mediaMissing": 41
+    },
+    "providerCalls": 0,
+    "productionWrites": 0,
+    "modelMetricsCount": 6938,
+    "queryPlanSha256": "1b5fd498014a24a28070cb124d8dd575ffef1df87285cb2d653df2de915cc57d"
+  },
+  "apiSmoke": {
+    "status": "PASS",
+    "recommendationsStatus": 200,
+    "firstReadMs": 138,
+    "repeatReadMs": 445,
+    "firstPageItems": 20,
+    "summary": {
+      "recommendations": 79,
+      "pending": 55,
+      "opportunities": 853,
+      "approved": 17,
+      "internalOpportunities": 52,
+      "actionableInbox": 161,
+      "processingGap": 8,
+      "evidenceGap": 199,
+      "mediaGap": 40,
+      "merged": 4,
+      "superseded": 1204
+    },
+    "newChoiceFormBundle": true,
+    "requiredEnglishFieldAbsent": true,
+    "contentApiStatus": 200,
+    "providerCalls": 0,
+    "scope": "Normal authenticated recommendations GET upgrades the existing derived inbox projection; no approval/recovery/WordPress write dispatched."
+  },
+  "rollback": [
+    {
+      "name": "/engine-before-5abf663a",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:44b927e50aef612640a25072d5a96d98e740ffc8a1a82d246e78e15602c11f46",
+      "running": false
+    },
+    {
+      "name": "/engine-worker-before-5abf663a",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:44b927e50aef612640a25072d5a96d98e740ffc8a1a82d246e78e15602c11f46",
+      "running": false
+    }
+  ],
+  "startup": {
+    "sha256": "c938126016adf24a5774ea2a33bcfc9e30f9107c846d742b784add9319c9bd41",
+    "previousStartupPreserved": true,
+    "imageAndRevisionVerified": true
+  },
+  "otherRuntimeConfigPreserved": true,
+  "remoteCleanup": {
+    "targetsRemoved": 80,
+    "bytesRemoved": 60372030
+  },
+  "databaseMigration": false,
+  "productionBackupOrSnapshot": false,
+  "realProviderTestCalls": 0,
+  "directWordPressWrites": false,
+  "derivedInboxRefresh": "normal authenticated recommendations GET; no separate historical backfill",
+  "notTested": [
+    "authenticated production browser adoption",
+    "full real-provider pipeline",
+    "real WordPress delivery"
+  ],
+  "cloudBuildId": "b8f2eb11-1bd7-446c-a96b-9c000aba4236",
+  "remoteBranches": {
+    "status": "PASS",
+    "remaining": [
+      "main"
+    ],
+    "deleted": 0,
+    "reason": "Only main existed after fetch/prune"
+  },
+  "localCleanup": {
+    "targets": [
+      "output/manual-media-release-20261001",
+      "dist"
+    ],
+    "bytesRemoved": 18357616086,
+    "preserved": [
+      "data",
+      "backups",
+      "node_modules",
+      "tracked files",
+      "acceptance evidence"
+    ],
+    "failures": 0,
+    "additionalStagingBytes": 51094037
+  }
+}

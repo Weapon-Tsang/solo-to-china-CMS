@@ -26,7 +26,7 @@
       "compact acceptance evidence"
     ]
   },
-  "productionDeployment": "PENDING: recorded separately after immutable-image rollout",
+  "productionDeployment": "PASS: 2.0.79 immutable image deployed; see production-release.json",
   "productionWritesDuringTesting": 0,
   "realProviderCallsDuringTesting": 0
 }
