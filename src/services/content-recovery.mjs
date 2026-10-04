@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { blockingMediaDispatchSql } from '../media-request-executor.mjs';
 import { id, json, now, sha256 } from '../utils.mjs';
 import { transaction } from '../db.mjs';
 import { validatePlanningDestination } from '../destination-consistency.mjs';
@@ -250,7 +251,7 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
         || PRODUCTION_STAGE_REGISTRY.find((item) => item.key === stage);
       if (stage === 'generate_visuals' && ctx.draft && repo.db.prepare(`SELECT 1 FROM media_dispatches md
         JOIN article_visuals av ON av.id=md.visual_id WHERE av.draft_id=?
-        AND md.state IN ('dispatch_started','outcome_unknown') LIMIT 1`).get(ctx.draft.id)) {
+        AND ${blockingMediaDispatchSql()} LIMIT 1`).get(ctx.draft.id)) {
         conflict('图片请求仍有未确认的供应商结果；先核对请求账本及候选文件，不能重复生图或扣费。');
       }
       if (!definition) conflict('没有可恢复的准确生产步骤。');

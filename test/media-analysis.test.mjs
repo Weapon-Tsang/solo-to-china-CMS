@@ -57,7 +57,26 @@ test("a cached source analysis replay does not consume the paid media dispatch b
   assert.equal(permits.length,1,"only the request that reached the provider holds a dispatch permit");
   assert.equal(permits[0].request.visualId,"visual-cache");
   assert.equal(permits[0].request.substage,"analyze_source_image");
-  assert.deepEqual(permits[0].finished,[{}]);
+  assert.deepEqual(permits[0].finished,[{error:null,responseReceived:true}]);
+});
+
+test('media repair retains schema feedback across an intervening quota wait',async()=>{
+  const output={asset_id:'quota-photo',source_sha256:'sha',analysis_status:'ready',asset_kind:'documentary_photo',
+    text_regions:[],photo_regions:[],entities:[],editor_ui_regions:[],primary_subjects:['Bridge'],
+    language_by_region:[],reader_text_present:false,confidence:0.9,analysis_version:'media-analysis-2',prompt_version:'media-analysis-prompt-4'};
+  let acquisitions=0,requests=0,finished=0;
+  const extractor=new KimiExtractor({provider:'vertex',projectId:'project',accessToken:'token',model:'test',
+    mediaRequestExecutor:{acquire(){
+      if(++acquisitions===2)throw Object.assign(new Error('Pacing'),{code:'MEDIA_RATE_WAIT',availableAt:new Date(Date.now()+2).toISOString()});
+      return {finish(){finished++;}};
+    }}},async(_url,init)=>{
+      requests++;
+      if(requests===2)assert.match(init.body,/Correct|correct|Errors|errors/);
+      return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(requests===1?{}:output)}]}}]});
+    });
+  const result=await extractor.analyzeMediaAsset({id:'quota-photo',original_sha256:'sha',
+    ai_derivative_data_url:`data:image/png;base64,${Buffer.from('fixture').toString('base64')}`});
+  assert.equal(result.result.analysis_status,'ready');assert.equal(requests,2);assert.equal(acquisitions,3);assert.equal(finished,2);
 });
 
 test("a blocked media dispatch stops source analysis before the provider request", async () => {

@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { repositoryFixture } from '../test-support/repository-fixture.mjs';
 import { normalizeXiaohongshuCapture } from '../src/adapters/xiaohongshu.mjs';
-import { bindingSupportsPhoto, readMediaBindings } from '../src/repositories/media-bindings.mjs';
+import { bindingSupportsPhoto, readMediaBindings, readMediaBindingIssues, readMediaBindingStates } from '../src/repositories/media-bindings.mjs';
 import { normalizeVisuals } from '../src/repository.mjs';
 import { createBackup, restoreBackup } from '../src/backup.mjs';
 import { openDatabase, SCHEMA_VERSION } from '../src/db.mjs';
@@ -29,6 +29,25 @@ function analyze(repository, assetId) {
   repository.saveSourceAssetAnalysis(assetId,{analysis_status:'ready',asset_kind:'documentary_photo',primary_subjects:['traditional courtyard'],
     text_regions:[],photo_regions:[],entities:[],reader_text_present:false,confidence:0.8,analysis_version:'media-analysis-2'});
 }
+
+test('batched media interpretation matches per-image validation and refreshes after evidence changes',t=>{
+  const {repository,db}=repositoryFixture(t);alias(db);
+  const source=capture(repository,'Photo 1: Huguang Guild Hall.\nPhoto 2 is not Huguang Guild Hall.',2,'batch-reading');
+  ready(db,source.id);repository.refreshSourceMediaBindings(source.id,{dryRun:false});
+  const ids=repository.getSource(source.id).assets.map(asset=>asset.id);
+  const compare=()=>{
+    const snapshot=readMediaBindingStates(db,[...ids,'missing']);
+    for(const id of ids)assert.deepEqual(snapshot.get(id),{bindings:readMediaBindings(db,id),issues:readMediaBindingIssues(db,id)});
+    assert.deepEqual(snapshot.get('missing'),{bindings:[],issues:[]});
+    return snapshot;
+  };
+  compare();
+  db.prepare('UPDATE sources SET raw_text=? WHERE id=?').run('Photo 1 is not Huguang Guild Hall.\nPhoto 2: Huguang Guild Hall.',source.id);
+  const changed=compare();assert.equal(changed.get(ids[0]).bindings.length,0);
+  db.exec('BEGIN');
+  try{db.prepare("UPDATE sources SET capture_version=capture_version+1 WHERE id=?").run(source.id);compare();}finally{db.exec('ROLLBACK');}
+  compare();
+});
 
 test('T02-36/39/43: typed evidence persists and only the supported use can match',t=>{
   const {repository,db}=repositoryFixture(t);alias(db);

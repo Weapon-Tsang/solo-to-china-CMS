@@ -1,3 +1,4 @@
+import { beginProviderAttempt } from "./request-control.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -20,7 +21,7 @@ export class KimiClient {
     return Boolean(this.config.apiKey);
   }
 
-  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null, onProviderDispatch = null }) {
     if (!this.enabled) throw new Error("KIMI_API_KEY is required for AI processing.");
     const policy = resolveStagePolicy(name, this.config);
     const effectiveTimeoutMs = timeoutMs || policy.timeoutMs;
@@ -33,11 +34,13 @@ export class KimiClient {
     for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
       const requestGateStartedAt = Date.now();
       await this.config.beforeRequest?.({ provider: "kimi", model: this.config.model, stage: name, attempt: attempt + 1,
-        estimatedTokens: estimateRequestTokens(messages) });
+        signal, estimatedTokens: estimateRequestTokens(messages) });
+      let response;
+      const reportAttempt = await beginProviderAttempt({ signal, onProviderDispatch, response: () => response,
+        emit: metric => this.emitModelCall(metric) });
       const attemptStartedAt = Date.now();
       telemetryContext.retryWaitMs = Math.max(0, attemptStartedAt - requestGateStartedAt);
       const requestStartedAt = new Date(attemptStartedAt).toISOString();
-      let response;
       try {
         response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",
@@ -60,30 +63,38 @@ export class KimiClient {
         });
       } catch (error) {
         const requestError = signal?.aborted ? error : providerTransportError("kimi", error);
-        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: signal?.aborted ? "cancelled" : "failed",
           errorCode: requestError?.code || requestError?.name || "REQUEST_FAILED", retryReason: attempt ? "request_retry" : null }));
         throw requestError;
       }
       if (!response.ok) {
         const payload = await jsonPayload(response);
-        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: String(payload?.error?.code || response.status), retryReason: attempt ? "provider_retry" : null,
           usage: payload?.usage }));
         throw new ProviderRequestError("Kimi", response.status, payload?.error?.message || response.statusText,
           { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
       }
-      const payload = /text\/event-stream/i.test(String(response.headers.get("content-type") || ""))
-        ? await kimiStreamPayload(response) : await jsonPayload(response);
+      let payload;
+      try {
+        payload = /text\/event-stream/i.test(String(response.headers.get("content-type") || ""))
+          ? await kimiStreamPayload(response) : await jsonPayload(response);
+      } catch (error) {
+        const requestError = signal?.aborted ? error : providerTransportError('kimi', error);
+        reportAttempt(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: signal?.aborted ? 'cancelled' : 'failed', errorCode:requestError.code || requestError.name }));
+        throw requestError;
+      }
       const choice = payload?.choices?.[0];
       if (choice?.finish_reason === "length") {
-        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usage }));
         throw Object.assign(new Error("Kimi response reached its output limit; increase KIMI_MAX_COMPLETION_TOKENS."), { code: "MODEL_OUTPUT_LIMIT", retryable: true });
       }
       const output = choice?.message?.content;
       if (typeof output !== "string" || !output.trim()) {
-        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: "EMPTY_MODEL_OUTPUT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usage }));
         throw Object.assign(new Error("Kimi returned no structured output."), { code: "EMPTY_MODEL_OUTPUT", retryable: true });
       }
@@ -91,12 +102,12 @@ export class KimiClient {
       try { parsed = JSON.parse(output); } catch { parsed = null; }
       const errors = parsed == null ? [{ path: "$", message: "invalid JSON" }] : validateJsonSchema(parsed, schema);
       if (parsed != null && errors.length === 0) {
-        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "succeeded", usage: payload?.usage, model: payload.model || this.config.model,
           retryReason: attempt ? "structured_repair" : null }));
         return { output: parsed, model: payload.model || this.config.model, usage: payload.usage || null };
       }
-      this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+      reportAttempt(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
         status: "failed", errorCode: "INVALID_MODEL_OUTPUT", retryReason: attempt ? "structured_repair" : "invalid_json_or_schema",
         usage: payload?.usage }));
       messages.push({ role: "assistant", content: output }, { role: "user", content: `Correct the JSON and return the complete object only. Errors: ${JSON.stringify(errors.slice(0, 20))}` });

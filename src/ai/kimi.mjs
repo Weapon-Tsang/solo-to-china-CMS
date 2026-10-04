@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import {setTimeout as delay} from 'node:timers/promises';
 import { slugify, truncate } from "../utils.mjs";
 import { createAiClient } from "./client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
@@ -124,21 +125,31 @@ export class KimiExtractor {
     // Acquire the media dispatch only when the request actually leaves for the
     // provider. A recovery that replays an analysis from the response cache must
     // not consume the bounded paid-dispatch budget of this visual.
-    let permit=null;
-    const acquirePermit=()=>{ permit=this.config.mediaRequestExecutor?.acquire({provider:this.config.provider || 'vertex',
-      model:this.config.model || 'unknown',accountScope:`${this.config.projectId || 'default'}:${this.config.location || 'global'}`,
-      visualId:telemetryContext?.visualId || asset.id,substage:'analyze_source_image'}) || null; };
-    let completion;
-    try {
-      const source={id:asset.source_id,capture_version:asset.capture_version,media_context:asset.media_context,assets:[asset]};
-      completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,onProviderDispatch:acquirePermit,
-        instructions:`${MEDIA_ANALYSIS_PROMPT}\n${MEDIA_CONTEXT_INSTRUCTIONS}`,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
-          sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",media_context:sharedMediaContext(source)})},
-          ...contextualImageParts(source,[asset],images)],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});
-      assertMediaOutputIdentity({media_analysis:[completion.output]},[asset],{requireAll:true});
-      permit?.finish();
-    } catch (error) { permit?.finish({error,responseReceived:error?.status != null
-      || ['LOCAL_OUTPUT_INVALID','MODEL_OUTPUT_INVALID'].includes(error?.code)}); throw error; }
+    let dispatched=0;
+    const acquirePermit=async()=>{
+      for (;;) {
+        signal?.throwIfAborted();
+        try {
+          const permit=this.config.mediaRequestExecutor?.acquire({provider:this.config.provider || 'vertex',
+            model:this.config.model || 'unknown',accountScope:`${this.config.projectId || 'default'}:${this.config.location || 'global'}`,
+            visualId:telemetryContext?.visualId || asset.id,substage:'analyze_source_image'}) || null;
+          dispatched++;return permit;
+        } catch(error) {
+          // The first quota wait yields the Job as before. Once a response has
+          // requested structured repair, retain that feedback while waiting for
+          // the next paid permit instead of restarting the same invalid prompt.
+          const until=Date.parse(error?.availableAt);
+          if(!dispatched || error?.code!=='MEDIA_RATE_WAIT' || !Number.isFinite(until))throw error;
+          await delay(Math.max(1,until-Date.now()),undefined,{signal:signal || undefined});
+        }
+      }
+    };
+    const source={id:asset.source_id,capture_version:asset.capture_version,media_context:asset.media_context,assets:[asset]};
+    const completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,onProviderDispatch:acquirePermit,
+      instructions:`${MEDIA_ANALYSIS_PROMPT}\n${MEDIA_CONTEXT_INSTRUCTIONS}`,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
+        sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",media_context:sharedMediaContext(source)})},
+        ...contextualImageParts(source,[asset],images)],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});
+    assertMediaOutputIdentity({media_analysis:[completion.output]},[asset],{requireAll:true});
     return {result:{...sanitizeMediaAnalysis({...completion.output,asset_id:asset.id,
       source_sha256:asset.original_sha256 || asset.stored_sha256 || completion.output?.source_sha256 || ""}),
       prompt_version:"media-analysis-prompt-4"},

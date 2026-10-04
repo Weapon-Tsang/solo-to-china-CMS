@@ -1,3 +1,7 @@
+# 2.0.80 Production continuity and interruption recovery
+
+App/Extension version `2.0.80`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Same-schema CODE_ONLY_RELEASE: no startup backfill or historical repair is required for rollout. Model step receipts, bounded provider dispatch, grounded Experience partitions, source-photo matching and current-capture status address audited production interruptions. Existing media plans are revised only through the guarded production workflow, preserving previous manifests and audit records. Content Production Strategy 3.9 and `config/content-strategy.json` remain unchanged. Development evidence and its limits are recorded in `audit/CMS_ARCHITECTURE_2026-10-04.md`, `audit/CMS_INTERRUPTION_HISTORY_2026-10-04.md` and `audit/CMS_INTERRUPTION_RECOVERY_2026-10-04.md`; production deployment evidence is recorded separately.
+
 # 2.0.79 Manual image choices and recommendation media readiness
 
 App/Extension version `2.0.79`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Same-schema CODE_ONLY_RELEASE. Manual image adoption uses choices without required English prose, with independent body and cover slots. Fact-ready recommendations now require related usable original-media candidates and are revalidated before approval. See `codex-cms-upgrade/evidence/manual-media-20261001/acceptance.json` for scoped development verification; production release results are recorded separately after rollout.

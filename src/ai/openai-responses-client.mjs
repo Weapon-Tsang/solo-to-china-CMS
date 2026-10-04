@@ -1,3 +1,4 @@
+import { beginProviderAttempt } from "./request-control.mjs";
 import crypto from "node:crypto";
 import { KimiClient } from "./kimi-client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
@@ -6,7 +7,7 @@ import { resolveStagePolicy } from "./stage-policy.mjs";
 import { estimateRequestTokens } from "./provider-rate-limiter.mjs";
 
 export class OpenAIResponsesClient extends KimiClient {
-  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null, onProviderDispatch = null }) {
     if (!this.enabled) throw configuredError("OpenAI");
     const policy = resolveStagePolicy(name, this.config);
     const wireSchema = openAiWireSchema(schema);
@@ -16,8 +17,7 @@ export class OpenAIResponsesClient extends KimiClient {
     for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
       const gateAt = Date.now();
       await this.config.beforeRequest?.({ provider: "openai", model: this.config.model, stage: name, attempt: attempt + 1,
-        estimatedTokens: estimateRequestTokens(instructions, input) });
-      const attemptAt = Date.now();
+        signal, estimatedTokens: estimateRequestTokens(instructions, input) });
       const body = {
         model: this.config.model,
         store: false,
@@ -28,6 +28,9 @@ export class OpenAIResponsesClient extends KimiClient {
         text: { format: { type: "json_schema", name: safeName(name), strict: true, schema: wireSchema } },
       };
       let response;
+      const reportAttempt = await beginProviderAttempt({ signal, onProviderDispatch, response: () => response,
+        emit: metric => this.emitModelCall(metric) });
+      const attemptAt = Date.now();
       try {
         response = await this.fetch(`${this.config.baseUrl}/responses`, {
           method: "POST",
@@ -37,7 +40,7 @@ export class OpenAIResponsesClient extends KimiClient {
         });
       } catch (error) {
         const wrapped = signal?.aborted ? error : providerTransportError("openai", error);
-        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+        reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: signal?.aborted ? "cancelled" : "failed", errorCode: wrapped.code || wrapped.name,
           dispatchState: "dispatch_started" }));
         throw wrapped;
@@ -45,7 +48,7 @@ export class OpenAIResponsesClient extends KimiClient {
       const payload = await response.json().catch(() => ({}));
       const requestId = response.headers.get("x-request-id") || payload?._request_id || null;
       if (!response.ok) {
-        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+        reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: "failed", errorCode: String(payload?.error?.code || response.status), usage: payload?.usage,
           httpStatus: response.status, requestId, dispatchState: "response_received" }));
         throw new ProviderRequestError("OpenAI", response.status, payload?.error?.message || response.statusText,
@@ -53,7 +56,7 @@ export class OpenAIResponsesClient extends KimiClient {
       }
       const terminal = responseFailure(payload);
       if (terminal) {
-        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+        reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: "failed", errorCode: terminal.code, usage: payload?.usage, httpStatus: response.status,
           requestId, dispatchState: "response_received" }));
         throw terminal;
@@ -64,12 +67,12 @@ export class OpenAIResponsesClient extends KimiClient {
       const decoded = parsed == null ? null : decodeOpenAiWire(parsed, schema);
       const errors = decoded == null ? [{ path: "$", message: "invalid or empty JSON" }] : validateJsonSchema(decoded, schema);
       if (!errors.length) {
-        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+        reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: "succeeded", usage: payload?.usage, model: payload?.model, httpStatus: response.status,
           requestId, dispatchState: "completed" }));
         return { output: decoded, model: payload?.model || this.config.model, usage: payload?.usage || null };
       }
-      this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+      reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
         status: "failed", errorCode: "INVALID_MODEL_OUTPUT", usage: payload?.usage, httpStatus: response.status,
         requestId, dispatchState: "response_received", retryReason: "structured_repair" }));
       input.push({ role: "assistant", content: [{ type: "output_text", text: outputText }] },

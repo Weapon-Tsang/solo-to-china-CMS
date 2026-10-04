@@ -1,3 +1,4 @@
+import { beginProviderAttempt } from "./request-control.mjs";
 import crypto from "node:crypto";
 import { KimiClient } from "./kimi-client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
@@ -6,7 +7,7 @@ import { resolveStagePolicy } from "./stage-policy.mjs";
 import { estimateRequestTokens } from "./provider-rate-limiter.mjs";
 
 export class DeepSeekClient extends KimiClient {
-  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null, onProviderDispatch = null }) {
     if (!this.enabled) throw Object.assign(new Error("DeepSeek API key is not configured."), { code: "AI_NOT_CONFIGURED", retryable: false });
     const policy = resolveStagePolicy(name, this.config);
     const identity = callIdentity(name, schema, instructions, content);
@@ -20,9 +21,11 @@ export class DeepSeekClient extends KimiClient {
     for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
       const gateAt = Date.now();
       await this.config.beforeRequest?.({ provider: "deepseek", model: this.config.model, stage: name, attempt: attempt + 1,
-        estimatedTokens: estimateRequestTokens(messages) });
-      const attemptAt = Date.now();
+        signal, estimatedTokens: estimateRequestTokens(messages) });
       let response;
+      const reportAttempt = await beginProviderAttempt({ signal, onProviderDispatch, response: () => response,
+        emit: metric => this.emitModelCall(metric) });
+      const attemptAt = Date.now();
       try {
         response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
           method: "POST",
@@ -34,14 +37,14 @@ export class DeepSeekClient extends KimiClient {
         });
       } catch (error) {
         const wrapped = signal?.aborted ? error : providerTransportError("deepseek", error);
-        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+        reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: signal?.aborted ? "cancelled" : "failed", errorCode: wrapped.code || wrapped.name, dispatchState: "dispatch_started" }));
         throw wrapped;
       }
       const payload = await response.json().catch(() => ({}));
       const requestId = response.headers.get("x-request-id") || payload?.id || null;
       if (!response.ok) {
-        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+        reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: "failed", errorCode: String(payload?.error?.code || response.status), usage: payload?.usage,
           httpStatus: response.status, requestId, dispatchState: "response_received" }));
         throw new ProviderRequestError("DeepSeek", response.status, payload?.error?.message || response.statusText,
@@ -49,7 +52,7 @@ export class DeepSeekClient extends KimiClient {
       }
       const choice = payload?.choices?.[0];
       if (["length", "max_tokens"].includes(choice?.finish_reason)) {
-        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+        reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", usage: payload?.usage, model: payload?.model,
           httpStatus: response.status, requestId, finishReason: choice.finish_reason, dispatchState: "response_received" }));
         throw Object.assign(new Error("DeepSeek output reached its token or context limit."), {
@@ -69,13 +72,13 @@ export class DeepSeekClient extends KimiClient {
       const errors = parsed == null ? [{ path: "$", message: "invalid or empty JSON" }] : validateJsonSchema(parsed, schema);
       lastIssues = errors.slice(0, 5).map((item) => String(item.path || "$"));
       if (!errors.length) {
-        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+        reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: "succeeded", usage: payload?.usage, model: payload?.model, httpStatus: response.status,
           requestId, dispatchState: "completed" }));
         return { output: parsed, model: payload?.model || this.config.model, usage: payload?.usage || null,
           downgradedClaims, droppedClaims };
       }
-      this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+      reportAttempt(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
         status: "failed", errorCode: "INVALID_MODEL_OUTPUT", usage: payload?.usage, httpStatus: response.status,
         requestId, finishReason: choice?.finish_reason, dispatchState: "response_received",
         retryReason: `structured_repair:${lastIssues.join(",")}` }));

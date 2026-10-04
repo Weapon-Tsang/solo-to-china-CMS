@@ -53,6 +53,21 @@ test('a frozen writing packet remains authoritative when a draft is saved and re
   // full package exactly, or completed stages would lose artifact reuse.
   assert.deepEqual(repository.briefFacts('brief'),repository.getBriefPackage('brief').facts);
   assert.deepEqual(repository.briefRouteBundle('brief') ?? null,repository.getBriefPackage('brief').route_bundle ?? null);
+  // An explicit non-route snapshot and empty fact selection are also frozen.
+  // A later live route/fact must not enter review or delivery dependencies.
+  const routeReader=repository.routeForCandidate.bind(repository);
+  const topicFacts=repository.topicFacts.bind(repository);
+  repository.routeForCandidate=()=>({route_id:'later-live-route'});
+  repository.topicFacts=()=>[{normalized_key:'later-live-fact'}];
+  assert.equal(repository.briefRouteBundle('brief'),null);
+  assert.equal(repository.getBriefPackage('brief').route_bundle,null);
+  db.prepare("UPDATE writing_packets SET evidence_ledger_json='[]',selected_fact_keys_json='[]' WHERE id='packet'").run();
+  assert.deepEqual(repository.briefFacts('brief'),[]);
+  assert.deepEqual(repository.getBriefPackage('brief').facts,[]);
+  db.prepare(`UPDATE writing_packets SET evidence_ledger_json='[{"key":"missing-snapshot"}]' WHERE id='packet'`).run();
+  assert.throws(()=>repository.briefFacts('brief'),/WRITING_PACKET_INVALID/);
+  assert.throws(()=>repository.getBriefPackage('brief'),/WRITING_PACKET_INVALID/);
+  repository.routeForCandidate=routeReader;repository.topicFacts=topicFacts;
   db.prepare("DELETE FROM writing_packets WHERE id='packet'").run();
   assert.deepEqual(repository.briefFacts('brief'),repository.getBriefPackage('brief').facts);
   assert.deepEqual(repository.topicFacts('candidate'),repository.getTopicPackage('candidate').facts);

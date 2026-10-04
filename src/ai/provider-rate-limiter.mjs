@@ -2,10 +2,13 @@
 // token-rate capacity before dispatch instead of discovering the quota through
 // billed or wasted 429 responses. A 429 observed anyway pauses only that lane.
 
+import { setTimeout as delay } from 'node:timers/promises';
+import { abortable } from './request-control.mjs';
+
 const MINUTE_MS = 60_000;
 
 export function createProviderRateLimiter({ spacingMs = 0, limits = {}, now = () => Date.now(),
-  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPauseMs = 300_000 } = {}) {
+  sleep = (ms, signal) => delay(ms, undefined, { signal:signal || undefined }), maxPauseMs = 300_000 } = {}) {
   const spacing = Math.max(0, Number(spacingMs || 0));
   const lanes = new Map();
   let nextGlobalStartAt = 0;
@@ -42,30 +45,30 @@ export function createProviderRateLimiter({ spacingMs = 0, limits = {}, now = ()
     return wait;
   };
 
-  async function acquire({ provider, model, estimatedTokens = 0 } = {}) {
+  async function acquire({ provider, model, estimatedTokens = 0, signal = null } = {}) {
+    signal?.throwIfAborted();
     const state = lane(provider, model);
     const tokens = Math.max(0, Math.ceil(Number(estimatedTokens || 0)));
     // Serialize admissions per lane so concurrent callers cannot all observe the
     // same free capacity.
     const previous = state.tail;
     let release;
-    state.tail = new Promise((resolve) => { release = resolve; });
-    await previous;
+    const released = new Promise((resolve) => { release = resolve; });
+    state.tail = previous.then(() => released);
     try {
+      await abortable(previous, signal);
       let waitedMs = 0;
       for (;;) {
-        const wait = waitFor(state, tokens, now());
+        signal?.throwIfAborted();
+        // Recheck pressure after every wait, including spacing waits: another
+        // in-flight request can return 429 while this caller is waiting.
+        const wait = Math.max(waitFor(state, tokens, now()), nextGlobalStartAt - now());
         if (wait <= 0) break;
         waitedMs += wait;
-        await sleep(wait);
-      }
-      const scheduledAt = Math.max(now(), nextGlobalStartAt);
-      nextGlobalStartAt = scheduledAt + spacing;
-      if (scheduledAt > now()) {
-        waitedMs += scheduledAt - now();
-        await sleep(scheduledAt - now());
+        await abortable(sleep(wait, signal), signal);
       }
       const at = now();
+      nextGlobalStartAt = at + spacing;
       state.requests.push(at);
       if (tokens) state.tokens.push({ at, tokens });
       return { lane: state.key, waitedMs };

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.80 - Unreleased
+
+- Checkpoint model results throughout production, preserve scoped writing evidence and share synchronous source-media projections to reduce repeat work.
+- Apply bounded provider concurrency, cancellation and shared cooldowns; distinguish exhausted retries and configuration failures.
+- Recover large Experience inputs through durable evidence partitions, compact references and validated output links.
+- Match required photographs by subject, retire inappropriate automatic paid itinerary fallbacks with revision history, and deduplicate original image bytes.
+- Align recovery and production state for settled recognition requests; show current-capture Experience failures instead of normal waiting.
+- Add interruption-history audits, real-data replay tools and permanent production regressions. Database schema 83 and Content Strategy 3.9 remain unchanged.
+
 ## 2.0.79 - Unreleased
 
 - Replace required English image captions and relationship text with choices for body or cover, image type and editorial relationship, followed by one adoption confirmation.

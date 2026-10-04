@@ -246,7 +246,7 @@ test("fresh pixel analysis preserves a recoverable visual and its pending QA can
     purpose:"Evidence-linked view supporting Baixiangju: Practical Visitor Guide for Independent Travelers",
     media_metadata:{authorized_asset_match:{version:"visual-match-2",mode:"article_fallback",score:0.18,
       request_hash:"legacy-low-coverage"}}}];
-  const output=normalizeVisuals(requested,{title:"Baixiangju: Practical Visitor Guide",
+  const output=normalizeVisuals(requested,{title:"Baixiangju: Practical Visitor Guide",strategy_version:'3.8',
     body_markdown:"Explore Baixiangju residential complex architecture and staircases."},
     {destination_slug:"chongqing",topic:"Baixiangju visitor guide"},[asset],{visuals:{target:1,maximum:5}});
   assert.equal(output.length,1);
@@ -543,7 +543,7 @@ test("an existing visual plan can be topped up with additional relevant source p
   assert.equal(output.filter((item)=>item.source_asset_id).length,2);
 });
 
-test('strategy 3.9 uses qualified originals and still plans relevant Chinese information graphics for English localization',()=>{
+test('strategy 3.9 automatically uses qualified originals and translates cards only when explicitly planned',()=>{
   const photoHash='a'.repeat(64);
   const common={remote_url:'https://media.test/asset.png',mime_type:'image/png',
     storage_status:'saved',original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED',
@@ -560,10 +560,13 @@ test('strategy 3.9 uses qualified originals and still plans relevant Chinese inf
       text:'重庆火锅菜单',readable:true,preserve:false}]}];
   const output=normalizeVisuals([],{title:'Chongqing food guide',body_markdown:'Chongqing hotpot restaurant menu guide',
     strategy_version:'3.9'},{destination_slug:'chongqing'},assets,{visuals:{target:2,maximum:5}});
-  assert.deepEqual(new Set(output.map((visual)=>visual.source_asset_id)),new Set(['photo','card']));
+  assert.deepEqual(new Set(output.map((visual)=>visual.source_asset_id)),new Set(['photo']));
   assert.equal(output.find((visual)=>visual.source_asset_id==='photo').acquisition_strategy,'use_authorized_source_image');
-  assert.equal(output.find((visual)=>visual.source_asset_id==='card').acquisition_strategy,'recompose_editorial_card');
-  assert.equal(output.find((visual)=>visual.source_asset_id==='card').status,'planned');
+  const explicit=normalizeVisuals([{image_type:'infographic',source_asset_id:'card',
+    image_subject:'Chongqing hotpot restaurant menu guide',required_in_article:true}],
+    {title:'Chongqing food guide',strategy_version:'3.9'},{destination_slug:'chongqing'},assets.filter(a=>a.id==='card'),{visuals:{maximum:2}});
+  assert.equal(explicit[0].acquisition_strategy,'recompose_editorial_card');
+  assert.equal(explicit[0].status,'planned');
 });
 
 test("an equal-count media plan repairs only the stale source slot and preserves successful metadata",()=>{

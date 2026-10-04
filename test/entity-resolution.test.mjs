@@ -150,3 +150,28 @@ function saveSource(repository, externalId, subject, value) {
   }, "test", "fixture-model");
   return capture;
 }
+
+test('production collision keeps distinct source evidence when model canonical keys converge', t => {
+  const {repository,db}=repositoryFixture(t);
+  const source=saveSource(repository,'canonical-collision','Zhongshan 4th Road','Walk after dinner.');
+  const first=db.prepare('SELECT * FROM claims WHERE source_id=?').get(source.id);
+  const columns=db.prepare('PRAGMA table_info(claims)').all().map(row=>row.name);
+  const second={...first,id:'claim-canonical-collision',normalized_key:'attraction.zhongsi.visit_time',
+    original_normalized_key:'attraction.zhongsi.visit_time',qualifiers_json:'["weekends only"]',
+    source_quote:'Walk after dinner on weekends only.'};
+  db.prepare(`INSERT INTO claims (${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')})`)
+    .run(...columns.map(column=>second[column]));
+  const resolution={entities:[],candidates:[],claim_updates:[first,second].map(row=>({claim_id:row.id,
+    entity_key:'attraction.zhongshan_4th_road',canonical_subject:'Zhongshan 4th Road',
+    canonical_key:first.normalized_key,confidence:.99}))};
+  const protectedFields=()=>db.prepare('SELECT id,source_id,value_text,source_quote,qualifiers_json,evidence_span_ids_json FROM claims ORDER BY id').all();
+  const before=protectedFields();
+  repository.applyEntityResolution('chongqing',resolution,'fixture');
+  repository.applyEntityResolution('chongqing',resolution,'fixture');
+  assert.deepEqual(protectedFields(),before);
+  const claims=db.prepare('SELECT normalized_key,entity_resolution_status FROM claims ORDER BY id').all();
+  assert.equal(new Set(claims.map(row=>row.normalized_key)).size,2);
+  assert.ok(claims.every(row=>row.entity_resolution_status==='resolved'));
+  repository.rebuildKnowledge('chongqing');
+  assert.deepEqual(protectedFields(),before);
+});

@@ -17,7 +17,9 @@ import { evaluateCoverage } from '../src/research-strategy.mjs';
 import { selectedFamilyProjection } from '../src/opportunity-family-evidence.mjs';
 import { queueOpportunityTitles } from '../src/services/opportunity-titles.mjs';
 
-for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`human approval drives ${pipelineMode} to QA and WordPress draft delivery`, async (t) => {
+for (const variant of ['legacy','article_bundle_v1','editorial-v2','legacy-restart','article_bundle_v1-restart']) test(`human approval drives ${variant} to QA and WordPress draft delivery`, async (t) => {
+  const injectCommitFailure = variant.endsWith('-restart');
+  const pipelineMode = variant.replace('-restart','');
   t.after(closeLocalPhotoAudit);
   const { db, repository, directory } = repositoryFixture(t);
   const commercialComponent = {
@@ -80,6 +82,27 @@ for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`
   const stageCalls = [];
   const contentEngine = {
     enabled: true,
+    async analyzeExperience(pack) {
+      stageCalls.push('extract_source_experience');
+      const claim=pack.claims.find(item=>/reservation|booking/.test(item.predicate)) || pack.claims[0];
+      assert.ok(claim && pack.segments.length);
+      return {model:'controlled-experience',output:{blocks:[{type:'decision_rule',title:'Plan timed attraction entry',
+        traveler_goal:'Prepare before arrival',segment_ids:pack.segments.map(item=>item.id),
+        supporting_claim_ids:[claim.id],evidence_span_ids:claim.evidence_span_ids || [],
+        decision_logic:['Reserve timed attractions'],conditions:[],warnings:[],alternatives:[],tradeoffs:[],sequence:[],confidence:0.9}]}};
+    },
+    async assembleEditorial(pack) {
+      stageCalls.push('assemble_editorial');
+      return {model:'controlled-assembly',output:{selected_fact_keys:pack.facts.map(item=>item.normalized_key),
+        selected_experience_block_ids:(pack.available_experiences || []).map(item=>item.id),
+        selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:'Use the approved arrival evidence.'}};
+    },
+    async planNarrative(pack) {
+      stageCalls.push('plan_narrative');
+      return {model:'controlled-narrative',output:{opening_job:'State the practical arrival answer.',throughline:'Prepare before arrival.',
+        route_sequence:(pack.brief?.canonical?.outline || []).map(item=>item.section_id),supporting_fact_keys:pack.facts.map(item=>item.normalized_key),
+        experience_placements:[],conditional_branches:[],tradeoffs:[],exclusions:[],closing_decision:'Reserve timed attractions.'}};
+    },
     async composeOpportunityTitles(pack) {
       stageCalls.push('compose_opportunity_titles');
       return {model:'title-replay-model',output:{proposals:pack.opportunities.map(item=>({
@@ -184,12 +207,13 @@ for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`
       return { postId: 42, postUrl: "https://example.test/?p=42", previewUrl: "https://example.test/?p=42&preview=true", status: "draft" };
     },
   };
-  const pipeline = new Pipeline(repository, sourceExtractor, {
+  const createPipeline = () => new Pipeline(repository, sourceExtractor, {
     contentEngine, wordpress,
     commercialComposer: new CommercialComposer({ maxOffersPerDraft: 3, disclosure: "Affiliate disclosure." }),
     frontendContracts,
     contentConfig: { minFacts: 5, maxPerDestination: 1 },
   });
+  let pipeline = createPipeline();
 
   for (const [externalId, title] of [["autoA", "Source A"], ["autoB", "Source B"]]) {
     const pixels=Buffer.alloc(1200*800*3);
@@ -213,6 +237,9 @@ for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`
   }));
 
   for (let index = 0; index < 60; index += 1) await pipeline.runOne();
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM experience_extraction_runs WHERE status='succeeded'").get().n,2);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM experience_blocks WHERE grounding_status='grounded'").get().n,2);
+  assert.equal(stageCalls.filter(stage=>stage==='extract_source_experience').length,2);
   if (pipelineMode === 'editorial-v2') {
     // Commission the scoped first-arrival topic, whose five supplied facts cover
     // preparation; the same evidence cannot support a complete city guide.
@@ -270,6 +297,24 @@ for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`
     'article_bundle_v1');
   // Exercise the historical job path; newly approved jobs use article_bundle_v1.
   if (pipelineMode === 'legacy') db.prepare("UPDATE jobs SET pipeline_version='legacy' WHERE type='plan_content' AND status='queued'").run();
+  const injectedStages = new Set();
+  const paidCalls = new Map();
+  if (injectCommitFailure) {
+    for (const method of ['assembleEditorial','plan','planNarrative','articleBundle','composePagePlan','draft','composeFrontendPage','review']) {
+      if (typeof contentEngine[method] !== 'function') continue;
+      const original = contentEngine[method].bind(contentEngine);
+      contentEngine[method] = async (...args) => { paidCalls.set(method,(paidCalls.get(method)||0)+1);return original(...args); };
+    }
+    const commit = repository.commitPipelineStage.bind(repository);
+    repository.commitPipelineStage = (job, ...args) => {
+      if (['plan_content','plan_narrative','compose_frontend_page_plan','generate_draft','compose_frontend_page','review_draft'].includes(job.type)
+        && !injectedStages.has(job.type)) {
+        injectedStages.add(job.type);
+        throw Object.assign(new Error('Injected transient business-commit failure after paid result'),{retryable:true});
+      }
+      return commit(job,...args);
+    };
+  }
   let mediaReady = false;
   for (let index = 0; index < 60; index += 1) {
     if (!mediaReady) {
@@ -289,6 +334,16 @@ for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`
       }
     }
     await pipeline.runOne();
+    if (injectCommitFailure) {
+      db.prepare("UPDATE jobs SET available_at='2000-01-01',next_eligible_at='2000-01-01' WHERE status='queued'").run();
+      // A fresh runner has no model-result memory; only durable receipts survive.
+      pipeline = createPipeline();
+    }
+  }
+
+  if (injectCommitFailure) {
+    assert.ok(injectedStages.has('plan_content') && injectedStages.has('review_draft'));
+    for (const [method,calls] of paidCalls) assert.equal(calls,1,`${method} must reuse the completed paid output after commit failure`);
   }
 
   const content = repository.listContent();
@@ -299,6 +354,18 @@ for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`
   assert.equal(content[0].qa_passed, 1);
   assert.equal(content[0].wordpress_post_id, 42);
   assert.equal(wordpress.calls.length, 1);
+  if (process.env.CMS_ARCHITECTURE_REPLAY_REPORT) {
+    const target=path.resolve(process.env.CMS_ARCHITECTURE_REPLAY_REPORT);
+    fs.mkdirSync(target,{recursive:true});
+    fs.writeFileSync(path.join(target,`${variant}.json`),JSON.stringify({variant,passed:true,
+      captures:db.prepare('SELECT count(*) n FROM sources').get().n,
+      groundedExperiences:db.prepare("SELECT count(*) n FROM experience_blocks WHERE grounding_status='grounded'").get().n,
+      stages:db.prepare("SELECT type,count(*) n FROM jobs WHERE status='succeeded' GROUP BY type ORDER BY type").all(),
+      checkpointStages:db.prepare('SELECT stage,count(*) n FROM pipeline_step_receipts GROUP BY stage ORDER BY stage').all(),
+      injectedCommitFailures:[...injectedStages],modelCallsAfterApproval:Object.fromEntries(paidCalls),
+      humanApprovalRequired:true,independentQaPassed:content[0].qa_passed===1,wordpressMockDeliveries:wordpress.calls.length,
+      realProviderCalls:0,productionWrites:0,limitations:['Controlled source and model outputs','Synthetic media QA','Mock WordPress']},null,2));
+  }
   assert.equal(wordpress.calls[0].publishPackage.page.blocks[0].type,
     pipelineMode === 'legacy' ? 'articleSection' : 'image');
   const deliveredCommercial = wordpress.calls[0].publishPackage.page.blocks.find((block)=>block.type === "affiliate_booking_card");

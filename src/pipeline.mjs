@@ -8,13 +8,14 @@ import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCo
 import { coverDeliveryBlocker } from './services/cover-selection.mjs';
 import { validateMediaDelivery } from "./media-delivery.mjs";
 import { assertPublicationEligibility, evaluatePublicationEligibility, freezeRequiredMediaManifest, mediaManifestForDraft, routeMediaDependencyHash, routePageDependencyHash } from "./publication-eligibility.mjs";
+import {extractExperienceWithRecovery} from './experience-recovery.mjs';
 import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 import { recoverRemoteOriginal } from "./source-media-store.mjs";
 import { auditSourcePhoto, rejectLowResolutionOriginal } from './local-photo-audit.mjs';
 import { requiresOriginalBodyMedia } from './visuals/body-media-policy.mjs';
 import { stageConfiguration } from './pipeline-contract.mjs';
-import { sourceProcessingProfile } from './source-processing-profile.mjs';
+import { sourceProcessingProfile, isEditorialMediaOnly } from './source-processing-profile.mjs';
 import { runNodeJsonProcess } from './process-runner.mjs';
 import { normalizeFrontendPageForDelivery } from "./content-taxonomy.mjs";
 import { remapBlockProvenanceForDelivery } from "./evidence-validator.mjs";
@@ -643,7 +644,7 @@ export class Pipeline {
           if (!coveragePackage) throw new Error(`Source segment ${job.entity_id} has no extraction result.`);
           if (coveragePackage.staleCaptureVersion) break;
           const assessment = coveragePackage.expectedModality === "text" && this.repository.shouldRunAiCoverage(job.entity_id) && typeof this.extractor.auditCoverage === "function"
-            ? await guarded((signal) => this.extractor.auditCoverage(coveragePackage, { signal, telemetryContext }))
+            ? await modelStep('coverage-audit',coveragePackage,(signal) => this.extractor.auditCoverage(coveragePackage, { signal, telemetryContext }))
             : null;
           commitStage(() => {
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
@@ -705,7 +706,9 @@ export class Pipeline {
         case "extract_source_experience": {
           const experiencePackage = this.repository.getExperienceExtractionPackage(job.entity_id);
           if (!experiencePackage) throw new Error(`Source ${job.entity_id} is not ready for Experience extraction.`);
-          const extracted = await modelStep('experience-extraction',experiencePackage,(signal) => this.sourceEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
+          const extracted = await extractExperienceWithRecovery(experiencePackage,{
+            runStep:modelStep,analyze:(part,{signal})=>this.sourceEngine.analyzeExperience(part,{signal,telemetryContext}),
+          });
           commitStage(() => {
             this.repository.saveExperienceExtraction(job.entity_id, extracted.output, extracted.model, experiencePackage);
             this.enqueueSourceSemanticDownstream(job.entity_id,job);
@@ -715,7 +718,7 @@ export class Pipeline {
         case "analyze_source_blueprint": {
           const source = this.repository.getSource(job.entity_id);
           if (!source?.structured) throw new Error(`Source ${job.entity_id} is not ready for editorial blueprint analysis.`);
-          const analyzed = await guarded((signal) => this.extractor.analyzeBlueprint(source, { signal, telemetryContext }));
+          const analyzed = await modelStep('source-blueprint',source,(signal) => this.extractor.analyzeBlueprint(source, { signal, telemetryContext }));
           commitStage(() => {
             this.repository.saveSourceBlueprint(job.entity_id, analyzed.output);
             this.enqueueChild(job,"rebuild_editorial","global",{workloadClass:"background_enrichment"});
@@ -735,7 +738,7 @@ export class Pipeline {
           this.requireExtractionEngine(telemetryContext);
           const intakePackage = this.repository.getIntakePackage(job.entity_id);
           if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for diagnostic analysis.`);
-          const analyzed = await guarded((signal) => this.sourceEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
+          const analyzed = await modelStep('source-intake',intakePackage,(signal) => this.sourceEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
           commitStage(() => this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model));
           break;
         }
@@ -878,7 +881,7 @@ export class Pipeline {
           this.requireExtractionEngine(telemetryContext);
           const intakePackage = this.repository.getIntakePackage(job.entity_id);
           if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for intake analysis.`);
-          const analyzed = await guarded((signal) => this.sourceEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
+          const analyzed = await modelStep('source-intake',intakePackage,(signal) => this.sourceEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
           commitStage(() => this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model));
           break;
         }
@@ -888,7 +891,7 @@ export class Pipeline {
           const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id, { opportunityId:ownerId });
           if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
           const assembled = typeof this.contentEngine.assembleEditorial === "function"
-            ? await guarded((signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }))
+            ? await modelStep('editorial-assembly',assemblyPackage,(signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }), 'assemble_editorial')
             : { output: { selected_fact_keys:(assemblyPackage.facts || []).map((item) => item.normalized_key),
               selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
               selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." }, model:"compatibility" };
@@ -907,8 +910,8 @@ export class Pipeline {
             const destinationValidation = validatePlanningDestination(contentPackage);
             if (!destinationValidation.valid) throw Object.assign(new Error(`${destinationValidation.code}: ${destinationValidation.message}`),
               { code:destinationValidation.code,retryable:false,details:destinationValidation });
-            const bundle = await guarded((signal) => this.contentEngine.articleBundle(contentPackage,
-              { signal, telemetryContext }));
+            const bundle = await modelStep('article-bundle',contentPackage,(signal) => this.contentEngine.articleBundle(contentPackage,
+              { signal, telemetryContext }), 'article_bundle_v1');
             const plannedEvidence = validatePlannedEvidence(bundle.output.brief, contentPackage);
             if (!plannedEvidence.valid) throw Object.assign(new Error('ARTICLE_BUNDLE_EVIDENCE_INVALID'),
               { code:'ARTICLE_BUNDLE_EVIDENCE_INVALID',retryable:false,details:plannedEvidence });
@@ -926,7 +929,7 @@ export class Pipeline {
             const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id, { opportunityId:ownerId });
             if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
             const assembled = typeof this.contentEngine.assembleEditorial === "function"
-              ? await guarded((signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }))
+              ? await modelStep('editorial-assembly',assemblyPackage,(signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }), 'assemble_editorial')
               : { output:{ selected_fact_keys:(assemblyPackage.facts || []).map((item) => item.normalized_key),
                 selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
                 selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." },model:"compatibility" };
@@ -943,7 +946,7 @@ export class Pipeline {
               code: destinationValidation.code, retryable: false, details: destinationValidation,
             });
           }
-          const planned = await guarded((signal) => this.contentEngine.plan(contentPackage, { signal, telemetryContext }));
+          const planned = await modelStep('content-plan',contentPackage,(signal) => this.contentEngine.plan(contentPackage, { signal, telemetryContext }));
           const plannedEvidence = validatePlannedEvidence(planned.output, contentPackage);
           if (!plannedEvidence.valid) throw Object.assign(new Error(`PLAN_EVIDENCE_INVALID: ${plannedEvidence.errors.map(item=>`${item.section || ''} ${item.key || ''}: ${item.message}`).join('; ')}`), {retryable:false, code:'PLAN_EVIDENCE_INVALID', details:plannedEvidence});
           commitStage(() => {
@@ -958,7 +961,7 @@ export class Pipeline {
             || this.repository.getBriefPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
           const planned = typeof this.contentEngine.planNarrative === "function"
-            ? await guarded((signal) => this.contentEngine.planNarrative(contentPackage, { signal, telemetryContext }))
+            ? await modelStep('narrative-plan',contentPackage,(signal) => this.contentEngine.planNarrative(contentPackage, { signal, telemetryContext }))
             : { model:"compatibility",output:{ opening_job:"State the practical answer immediately.",
               throughline:contentPackage.brief?.reader_promise || contentPackage.brief?.topic || "Help the traveler decide.",
               route_sequence:(contentPackage.brief?.canonical?.outline || []).map((section) => section.section_id).filter(Boolean),
@@ -988,7 +991,7 @@ export class Pipeline {
             this.repository.createFrontendCapabilityRequest({ briefId: job.entity_id, semanticNeed: "article-page-composition", useCase: contentPackage.brief?.topic || "Content brief", reason: "The active Frontend Contract exposes no stable components for this page composition." });
             throw new Error("MISSING_FRONTEND_CAPABILITY: no stable Frontend component can express this page.");
           }
-          const composed = await guarded((signal) => this.contentEngine.composePagePlan(contentPackage, capabilities, { signal, telemetryContext }));
+          const composed = await modelStep('frontend-plan',{contentPackage,capabilities},(signal) => this.contentEngine.composePagePlan(contentPackage, capabilities, { signal, telemetryContext }));
           const validation = this.frontendContracts.validateCompositionPlan(composed.output);
           if (!validation.valid) {
             this.repository.saveFrontendPagePlan(job.entity_id, contract, composed.output, validation, composed.model);
@@ -1008,7 +1011,7 @@ export class Pipeline {
           // frozen-review feedback as automatic regeneration. First drafts
           // have no failed current review, so this remains null initially.
           const qualityFeedback = this.repository.qualityRegenerationFeedback(job.entity_id);
-          const drafted = await guarded((signal) => this.contentEngine.draft(contentPackage, qualityFeedback, { signal, telemetryContext }));
+          const drafted = await modelStep('article-draft',{contentPackage,qualityFeedback},(signal) => this.contentEngine.draft(contentPackage, qualityFeedback, { signal, telemetryContext }));
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model,
@@ -1221,7 +1224,10 @@ export class Pipeline {
                 continue;
               }
                if (failed.retryable || visual.acquisition_strategy==='render_route_schematic' || visual.factual_image_required || visual.required_in_article
-                 || parseStoredJson(visual.media_metadata_json)?.required_visual_obligation?.required) throw error;
+                 || parseStoredJson(visual.media_metadata_json)?.required_visual_obligation?.required) {
+                error.retryable=failed.retryable;
+                throw error;
+              }
               this.logger.warn("pipeline.optional_visual_skipped", { visualId: visual.id, draftId: job.entity_id, error });
             }
           }
@@ -1252,7 +1258,7 @@ export class Pipeline {
           const mediaDependencyHash=routeMediaDependencyHash(this.repository.db,job.entity_id);
           const composed = composePageFromAst(currentAst, capabilities, contract.pageSchema.schema, contentPackage.frontend_page_plan?.plan, existingPageId)
             || (job.pipeline_version === 'article_bundle_v1'
-              ? null : await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext })));
+              ? null : await modelStep('frontend-page',{contentPackage,capabilities,schema:contract.pageSchema.schema},(signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext })));
           if (!composed) throw Object.assign(new Error('Deterministic page composition requires supported Frontend Contract blocks.'),
             { code:'FRONTEND_CONTRACT_UNSUPPORTED',retryable:false,
               details:{contentType:currentAst?.content_type,nodeCount:currentAst?.nodes?.length || 0,
@@ -1278,7 +1284,7 @@ export class Pipeline {
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const mediaDependencyHash=routeMediaDependencyHash(this.repository.db,job.entity_id);
           const pageDependencyHash=routePageDependencyHash(this.repository.db,job.entity_id);
-          const reviewed = await guarded((signal) => this.contentEngine.review(contentPackage, { signal, telemetryContext }));
+          const reviewed = await modelStep('article-review',contentPackage,(signal) => this.contentEngine.review(contentPackage, { signal, telemetryContext }));
           commitStage(() => {
           const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
             { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash,
@@ -1298,7 +1304,7 @@ export class Pipeline {
           this.requireContentEngine();
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
-          const drafted = await guarded((signal) => this.contentEngine.repairDraft(contentPackage, contentPackage.review?.issues || [], { signal, telemetryContext }));
+          const drafted = await modelStep('draft-repair',contentPackage,(signal) => this.contentEngine.repairDraft(contentPackage, contentPackage.review?.issues || [], { signal, telemetryContext }));
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model,
@@ -1733,9 +1739,7 @@ export class Pipeline {
 
   enqueueSourceSemanticDownstream(sourceId,parentJob=null) {
     const source=this.repository.getSource(sourceId);
-    if (source?.status === 'media_only'
-      || source?.submission_metadata?.editorialMediaOnly === true
-      || source?.acquisition_origin === 'user_supplied_editorial_media') {
+    if (isEditorialMediaOnly(source || {})) {
       this.logger.info('pipeline.editorial_media_downstream_skipped', { sourceId });
       return;
     }

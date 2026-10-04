@@ -246,6 +246,13 @@ export function explainOperationalFailure(job) {
     action: { id: 'recapture_media', label: '打开原文并重新采集图片', why: '新版采集器会保留已授权原图；重新采集后系统可继续页面编排。' },
     technicalDetail: details,
   };
+  if (status === 402 || /insufficient balance|payment required|billing (?:account )?(?:disabled|suspended)/i.test(message)) return {
+    category:'configuration',headline:'外部服务的余额或计费状态阻止了请求',
+    reason:'服务明确返回余额不足或计费不可用；重复执行任务无法恢复服务，已有素材和文章仍然保留。',
+    action:{id:/wordpress/i.test(type) ? null : 'configure_ai',label:'先核对服务余额与计费状态',
+      why:'恢复对应服务的计费条件后，再重试失败步骤；不要重跑已完成阶段。'},
+    technicalDetail:details,
+  };
   if (status === 429 || /resource (?:has been )?exhausted|quota|rate.?limit/i.test(message)) return {
     category: 'capacity', headline: '供应商请求遇到限流或容量压力',
     reason: '外部服务返回 429 或配额/容量提示；无法仅凭此判断是余额、硬配额还是共享容量。系统应遵守 Retry-After 与有界退避，不把它算作内容或图片质量失败。已有成功产物继续保留。',

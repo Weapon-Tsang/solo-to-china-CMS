@@ -1,5 +1,15 @@
 // Observable intake properties select a route; this is not a semantic-quality
 // score. Conservative routing stays opt-in until the fixed quality trial passes.
+export function isEditorialMediaOnly(source = {}) {
+  let metadata = source.submission_metadata;
+  if (!metadata && source.submission_metadata_json) {
+    try { metadata = JSON.parse(source.submission_metadata_json); } catch { /* Unknown metadata is not an exemption. */ }
+  }
+  return ['media_only','manual_article_stored'].includes(source.status) || source.source_kind === 'manual_article_upload'
+    || source.acquisition_origin === 'user_supplied_editorial_media'
+    || metadata?.editorialMediaOnly === true;
+}
+
 export function sourceProcessingProfile(source = {}) {
   const text = String(source.raw_text || source.rawText || '');
   const media = source.assets || [];

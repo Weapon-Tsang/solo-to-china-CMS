@@ -76,9 +76,12 @@ export function refreshSourceMediaBindings(db, sourceId, {dryRun = true, assetId
     || assetIds.some(id => typeof id !== 'string' || !id))) throw new Error('Invalid scoped media asset IDs.');
   const scopedIds = assetIds === null ? null : [...new Set(assetIds)];
   const assetColumns='id,source_id,capture_version,position,caption_text,nearby_text,alt_text,original_sha256,stored_sha256,provenance_json';
-  const assets=scopedIds === null
+  const selected=scopedIds === null
     ? db.prepare(`SELECT ${assetColumns} FROM current_source_assets WHERE source_id=? AND kind='image' ORDER BY position,id`).all(sourceId)
-    : scopedIds.flatMap(id => db.prepare(`SELECT ${assetColumns} FROM current_source_assets WHERE source_id=? AND id=? AND kind='image'`).all(sourceId,id));
+    : scopedIds.length ? db.prepare(`SELECT ${assetColumns} FROM current_source_assets WHERE source_id=?
+        AND id IN (${scopedIds.map(()=>'?').join(',')}) AND kind='image'`).all(sourceId,...scopedIds) : [];
+  const byId=new Map(selected.map(asset=>[asset.id,asset]));
+  const assets=scopedIds === null ? selected : scopedIds.map(id=>byId.get(id)).filter(Boolean);
   if (scopedIds && assets.length !== scopedIds.length) throw Object.assign(new Error('Asset does not belong to the current source capture.'),
     {code:'CONTEXT_STALE',statusCode:409});
   const aliases=aliasCatalog(db);
@@ -201,6 +204,13 @@ export function refreshSourceMediaBindings(db, sourceId, {dryRun = true, assetId
 }
 
 export function readMediaBindings(db, assetId) {
+  return confirmedBindings(db,assetId,()=>{
+    const source=db.prepare('SELECT source_id FROM source_assets WHERE id=?').get(assetId);
+    return refreshSourceMediaBindings(db,source.source_id,{dryRun:true,assetIds:[assetId]}).assets[0];
+  });
+}
+
+function confirmedBindings(db, assetId, plannedAsset) {
   const rows = db.prepare(`SELECT mb.*,mo.context_hash,mo.original_sha256,mo.capture_version,mo.status AS context_status
     FROM media_bindings mb JOIN media_occurrences mo ON mo.id=mb.occurrence_id
     JOIN source_assets sa ON sa.id=mb.asset_id JOIN sources s ON s.id=sa.source_id
@@ -213,11 +223,35 @@ export function readMediaBindings(db, assetId) {
   if (!rows.length) return [];
   // Read-time validation closes the interval between a caption/alias edit and
   // its next repair job. It is local, scoped and never writes or calls a model.
-  const source = db.prepare('SELECT source_id FROM source_assets WHERE id=?').get(assetId);
-  const planned = refreshSourceMediaBindings(db,source.source_id,{dryRun:true,assetIds:[assetId]});
-  const valid = new Set(planned.assets.flatMap(asset => asset.bindings.filter(binding => binding.status === 'confirmed').map(binding => binding.id)));
+  const valid = new Set((plannedAsset()?.bindings || []).filter(binding => binding.status === 'confirmed').map(binding => binding.id));
   return rows.filter(row => valid.has(row.id)).map(row=>({...row,evidence:JSON.parse(row.evidence_json),
       allowed_uses:JSON.parse(row.allowed_uses_json),prohibited_inferences:JSON.parse(row.prohibited_inferences_json)}));
+}
+
+// Request-scoped, read-only snapshot. Sharing the source interpretation across
+// images avoids reloading a large source body for every image and every reader.
+// Never retain this map across asynchronous work or database mutations.
+export function readMediaBindingStates(db, assetIds) {
+  const ids=[...new Set(assetIds)],current=new Map(),planned=new Map(),states=new Map();
+  for(let offset=0;offset<ids.length;offset+=200){
+    const page=ids.slice(offset,offset+200);
+    for(const row of db.prepare(`SELECT id,source_id FROM current_source_assets WHERE id IN (${page.map(()=>'?').join(',')})`)
+      .all(...page))current.set(row.id,row.source_id);
+  }
+  const sources=Map.groupBy([...current],([,sourceId])=>sourceId);
+  for(const [sourceId,entries] of sources){
+    for(let offset=0;offset<entries.length;offset+=200){
+      const result=refreshSourceMediaBindings(db,sourceId,{dryRun:true,assetIds:entries.slice(offset,offset+200).map(([id])=>id)});
+      for(const asset of result.assets)planned.set(asset.asset_id,asset);
+    }
+  }
+  for(const id of ids){
+    const vetoes=db.prepare(`SELECT DISTINCT destination_slug,entity_key,canonical_subject,relation_type,status
+      FROM media_bindings WHERE asset_id=? AND status='revoked'`).all(id);
+    states.set(id,{bindings:confirmedBindings(db,id,()=>planned.get(id)),issues:[
+      ...(planned.get(id)?.bindings || []).filter(row=>['conflict','revoked','ambiguous','candidate'].includes(row.status)),...vetoes]});
+  }
+  return states;
 }
 
 export function bindingSupportsPhoto(asset, request = {}) {

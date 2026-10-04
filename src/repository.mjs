@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { blockingMediaDispatchSql } from './media-request-executor.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
 import { boilerplateTitleSubject, evidenceTitle, isFacetListTitle } from './editorial-title.mjs';
@@ -29,7 +30,7 @@ import { AI_JOB_TYPES, DATABASE_HEAVY_JOB_TYPES, classifyBatchFailure, isOperati
   inheritJobContext,laneBackoffMs,modelRoleForJob,workloadClassForJob,PRODUCTION_LANE_JOB_TYPES } from "./job-policy.mjs";
 import { pageBlockSignature, selectedFactEvidence, selectedFactSnapshot } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
-import { sourceProcessingProfile } from "./source-processing-profile.mjs";
+import { sourceProcessingProfile, isEditorialMediaOnly } from "./source-processing-profile.mjs";
 import { summarizeModelCostLedger } from "./ai/stage-policy.mjs";
 import {
   affectedInternalLinkBlocks, buildSeoPreview, duplicateContentRisks, inventoryTargetChanges,
@@ -51,7 +52,7 @@ import { visualQaMentionsSpellingError } from './visual-qa.mjs';
 import { recoverLegacyVisualReceipts } from './services/legacy-visual-receipts.mjs';
 import { withMediaFileLease } from './media-file-lease.mjs';
 import { buildMediaContext, supplementMediaContext, readMediaContextRange } from './media-context.mjs';
-import { refreshSourceMediaBindings, readMediaBindings, readMediaBindingIssues, bindingSupportsPhoto, bindingBlocksPhoto, mediaEntityKeys } from './repositories/media-bindings.mjs';
+import { refreshSourceMediaBindings, readMediaBindings, readMediaBindingIssues, readMediaBindingStates, bindingSupportsPhoto, bindingBlocksPhoto, mediaEntityKeys } from './repositories/media-bindings.mjs';
 import { repairMediaBinding } from './repositories/media-binding-repair.mjs';
 import { mediaAvailabilitySnapshot } from './media-availability.mjs';
 import { normalizeRouteFragments, routeContentKind, assertFrozenRoute, routeError, routeHash, validateRouteDraft } from './route-bundle.mjs';
@@ -1678,7 +1679,8 @@ export class Repository {
   }
 
   runSourceProcessingGapRecovery({dryRun=true,approvedFromRunId=null}={}) {
-    const sources=this.db.prepare(`SELECT s.id,s.status,s.capture_version,s.title,s.completeness_status,
+    const sources=this.db.prepare(`SELECT s.id,s.status,s.source_kind,s.capture_version,s.title,s.completeness_status,
+        s.acquisition_origin,s.submission_metadata_json,
         json_extract(s.submission_metadata_json,'$.processingEstimate.requiresManualStart') AS legacy_manual_start,
         json_extract(s.submission_metadata_json,'$.processingEstimate.processingClass') AS processing_class,
         json_extract(s.submission_metadata_json,'$.processingEstimate.blockReasons') AS hard_limit_reasons,
@@ -1691,7 +1693,9 @@ export class Repository {
       FROM sources s
       ORDER BY s.captured_at,s.id`).all();
     const items=[];
+    let excludedMediaOnlySources=0;
     for(const source of sources){
+      if(isEditorialMediaOnly(source)){excludedMediaOnlySources+=1;continue;}
       const segments=this.db.prepare("SELECT id FROM current_source_segments WHERE source_id=? ORDER BY sequence").all(source.id);
       const missingExtractions=segments.filter((segment)=>!this.db.prepare("SELECT 1 FROM segment_extractions WHERE segment_id=?").get(segment.id));
       const missingCoverage=segments.filter((segment)=>!missingExtractions.some((item)=>item.id===segment.id)
@@ -1733,7 +1737,7 @@ export class Repository {
         priority:70,executionRoute:action.stage==="extract_segment_claims"?"batch":"auto",
         workloadClass:"historical_recovery",recoveryRunId:runId});
     }
-    const report={fingerprint,scannedSourceCount:sources.length,sourceCount:items.filter((item)=>item.actions.length).length,
+    const report={fingerprint,scannedSourceCount:sources.length,excludedMediaOnlySources,sourceCount:items.filter((item)=>item.actions.length).length,
       gapCount:items.length,actionCount:actionableCount,
       legacyManualStartCount:items.filter((item)=>item.category==="NO_JOB_LEGACY_GATE").length,
       noActiveJobCount:items.filter((item)=>!item.activeJobs.length&&item.actions.length).length,
@@ -1839,7 +1843,7 @@ export class Repository {
     if (!input) throw new Error(`Source ${sourceId} is not ready for Experience extraction.`);
     const routeFragments=extraction.route_fragments?.length ? normalizeRouteFragments(extraction.route_fragments,input) : [];
     const currentCapture=this.db.prepare('SELECT capture_version FROM sources WHERE id=?').get(sourceId);
-    if(routeFragments.length && currentCapture?.capture_version!==input.source.capture_version)
+    if(currentCapture?.capture_version!==input.source.capture_version)
       throw routeError('ROUTE_VERSION_STALE',{source_id:sourceId});
     const reconcileSourceOpportunities = () => {
       const destination = this.db.prepare("SELECT destination_slug FROM structured_sources WHERE source_id=?").get(sourceId);
@@ -1873,7 +1877,9 @@ export class Repository {
       supporting_claim_ids: uniqueStrings(block?.supporting_claim_ids).filter((value) => validClaims.has(value)),
       evidence_span_ids: uniqueStrings(block?.evidence_span_ids).filter((value) => validSpans.has(value)),
       confidence: Math.max(0, Math.min(1, Number(block?.confidence || 0))),
-    })).filter((block) => block.segment_ids.length && (block.supporting_claim_ids.length || block.evidence_span_ids.length)).slice(0,20);
+    })).filter((block) => block.segment_ids.length && (block.supporting_claim_ids.length || block.evidence_span_ids.length));
+    if(blocks.length>(extraction.partitioned===true ? 160 : 20))throw Object.assign(
+      new Error('Experience output exceeds its grounded block budget.'),{code:'EXPERIENCE_OUTPUT_BUDGET',retryable:false});
     transaction(this.db, () => {
       this.db.prepare(`UPDATE experience_extraction_runs SET status='superseded',updated_at=?
         WHERE source_id=? AND status='succeeded' AND input_hash<>?`).run(timestamp, sourceId, input.input_hash);
@@ -2392,6 +2398,16 @@ export class Repository {
           next_eligible_at=NULL, locked_at=NULL, locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
         WHERE status='queued' AND next_eligible_at IS NOT NULL AND attempts>=max_attempts
       `).run(timestamp, timestamp, timestamp);
+      // Once an eligible exclusive rebuild has waited a minute, let running
+      // jobs drain. Otherwise continuously arriving AI/ingest work can prevent
+      // the queue from ever becoming empty enough to update Knowledge.
+      const drainForDatabaseWriter = this.db.prepare(`SELECT created_at FROM jobs
+        WHERE status='queued' AND available_at<=? AND COALESCE(next_eligible_at,available_at)<=?
+          AND datetime(created_at)<=datetime(?,'-1 minute')
+          AND type IN (${databaseHeavyTypes.map(()=>"?").join(",")})
+          AND NOT EXISTS (SELECT 1 FROM vertex_batch_items i JOIN vertex_batch_runs r ON r.id=i.run_id
+            WHERE i.job_id=jobs.id AND r.status IN ('preparing','submitted'))
+        ORDER BY created_at LIMIT 1`).get(timestamp, timestamp, timestamp, ...databaseHeavyTypes);
       const job = this.db.prepare(`
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ? AND COALESCE(next_eligible_at,available_at)<=?
@@ -2411,6 +2427,8 @@ export class Repository {
             AND database_writer.type IN (${databaseHeavyTypes.map(()=>"?").join(",")}))
           AND (jobs.type NOT IN (${databaseHeavyTypes.map(()=>"?").join(",")})
             OR NOT EXISTS (SELECT 1 FROM jobs active_pipeline_job WHERE active_pipeline_job.status='running'))
+          AND (?=0 OR jobs.type IN (${databaseHeavyTypes.map(()=>"?").join(",")})
+            OR (jobs.type='finalize_source_extraction' AND jobs.created_at<=?))
           AND (? IS NULL OR jobs.workload_class=? OR (?='production' AND jobs.workload_class='normal_ingest'
             AND jobs.type IN (${[...PRODUCTION_LANE_JOB_TYPES].map(() => "?").join(",")})))
           AND (SELECT COUNT(*) FROM jobs running_lane WHERE running_lane.status='running'
@@ -2452,7 +2470,8 @@ export class Repository {
       `).get(timestamp, timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
         ...AI_JOB_TYPES, timestamp, timestamp, providerReady ? 1 : 0,
         this.clock().getTime() >= (this.visualBackoffUntil || 0) ? 1 : 0,
-        ...databaseHeavyTypes, ...databaseHeavyTypes, workloadClass, workloadClass, workloadClass,
+        ...databaseHeavyTypes, ...databaseHeavyTypes, drainForDatabaseWriter ? 1 : 0, ...databaseHeavyTypes,
+        drainForDatabaseWriter?.created_at || timestamp, workloadClass, workloadClass, workloadClass,
         ...PRODUCTION_LANE_JOB_TYPES, timestamp);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
@@ -2507,79 +2526,86 @@ export class Repository {
   }
 
   failJob(job, error) {
-    const providerPressure = isProviderPressure(error);
-    const retry = error?.retryable !== false && job.attempts < job.max_attempts;
-    if (providerPressure) {
-      this.providerPressureStreak += 1;
-      this.providerSuccessStreak = 0;
-    }
-    const baseDelayMs = providerPressure
-      ? Math.min(this.providerBackoffMaxMs, this.providerBackoffInitialMs * 2 ** Math.min(10, Math.max(0, this.providerPressureStreak - 1)))
-      : Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
-    const delayMs = Math.max(Number(error?.retryAfterMs || 0),laneBackoffMs(job.workload_class,
-      Math.round(baseDelayMs * (0.8 + Math.random() * 0.4))));
-    const availableAt = new Date(this.clock().getTime() + delayMs).toISOString();
-    if (providerPressure) {
-      if (job.type === 'generate_visuals') this.visualBackoffUntil = Math.max(this.visualBackoffUntil || 0, Date.parse(availableAt));
-      else this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
-    }
-    const timestamp = this.jobTimestamp();
-    if(providerPressure)this.db.prepare(`UPDATE model_call_metrics SET retry_after_ms=COALESCE(?,retry_after_ms),backoff_until=?
-      WHERE id=(SELECT id FROM model_call_metrics WHERE run_id=? ORDER BY created_at DESC,id DESC LIMIT 1)`)
-      .run(error?.retryAfterMs??null,availableAt,job.id);
-    const frozenProvider=json(job.model_profile_json,{}).provider;
-    const pressuredProvider=String(error?.provider||frozenProvider||this.activeProvider||"");
-    if(providerPressure&&job.type!=="generate_visuals"&&pressuredProvider)this.db.prepare(`INSERT INTO provider_runtime_state(provider,model,
-      consecutive_failures,backoff_until,updated_at) VALUES (?,?,1,?,?) ON CONFLICT(provider) DO UPDATE SET
-      consecutive_failures=provider_runtime_state.consecutive_failures+1,backoff_until=excluded.backoff_until,updated_at=excluded.updated_at`)
-      .run(pressuredProvider,json(job.model_profile_json,{}).model||"",availableAt,timestamp);
-    const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
-    const failureClass = terminalFailureClass(error, retry, providerPressure);
-    const failureCode = String(error?.code || error?.status || "").slice(0, 120);
-    const failureDiagnostic = structuredFailureDiagnostic(job, error);
-    const changed = this.db.prepare(`
-      UPDATE jobs SET status=?, available_at=?, next_eligible_at=?,last_error=?, completed_at=?, duration_ms=?,
-        failure_class=?,last_failure_code=?,failure_details_json=?,failure_execution_kind=?,
-        locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
-      WHERE id=? AND status='running' AND locked_by=? AND lease_generation=?
-    `).run(retry ? "queued" : "failed", availableAt, retry ? availableAt : null, String(error?.message || error).slice(0, 4_000),
-      retry ? null : timestamp, retry ? null : durationMs, failureClass, failureCode,
-      JSON.stringify(failureDiagnostic.details), failureDiagnostic.executionKind,
-      timestamp, job.id, job.locked_by || this.workerId,
-      Number(job.lease_generation || 0)).changes;
-    if (changed !== 1) return false;
-    this.db.prepare(`INSERT INTO production_failure_diagnostics(id,job_id,job_attempt,stage,error_code,execution_kind,
-      draft_revision,input_hash,candidate_hash,details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(job_id,job_attempt,error_code) DO UPDATE SET execution_kind=excluded.execution_kind,
-        draft_revision=excluded.draft_revision,input_hash=excluded.input_hash,candidate_hash=excluded.candidate_hash,
-        details_json=excluded.details_json,created_at=excluded.created_at`).run(
-      id("failure_diag"),job.id,Number(job.attempts || 0),job.type,failureCode || "PRODUCTION_FAILED",
-      failureDiagnostic.executionKind,failureDiagnostic.draftRevision,failureDiagnostic.inputHash,
-      failureDiagnostic.candidateHash,JSON.stringify(failureDiagnostic.details),timestamp);
-    const message = String(error?.message || error).slice(0, 4_000);
-    if (job.type === "extract_source") {
-      this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
-    } else if (!retry && ["extract_source", "preflight_source", "segment_source"].includes(job.type)) {
-      this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
-    } else if (!retry && job.type === "plan_content") {
-      this.db.prepare("UPDATE topic_candidates SET status='candidate', updated_at=? WHERE id=?").run(now(), job.entity_id);
-    } else if (!retry && ["generate_draft", "compose_frontend_page_plan"].includes(job.type)) {
-      this.db.prepare("UPDATE content_briefs SET status='exception', last_error=?, updated_at=? WHERE id=?").run(message, now(), job.entity_id);
-    } else if (!retry && ["review_draft", "revise_draft", "compose_frontend_page", "compose_publish_page", "push_wordpress_draft"].includes(job.type)) {
-      this.db.prepare("UPDATE article_drafts SET status='exception', updated_at=? WHERE id=?").run(now(), job.entity_id);
-    }
-    if (!retry && PRODUCTION_JOB_TYPES.has(job.type)) this.handleTerminalProductionFailure(job, error);
-    if (!retry && (job.type === 'generate_visuals'
-      || ['compose_frontend_page','compose_publish_page','push_wordpress_draft'].includes(job.type)
-        && /MEDIA_|VISUAL_|IMAGE_|429|RESOURCE_EXHAUSTED/i.test(`${failureCode} ${message}`))) {
-      const draftId = job.type === 'generate_visuals' ? job.entity_id : this.productionContext(job)?.draft_id;
-      if (draftId) this.db.prepare("UPDATE article_drafts SET status='needs_review',updated_at=? WHERE id=?")
-        .run(now(), draftId);
-    }
-    if (!retry && ["generate_visuals", "compose_frontend_page"].includes(job.type)) this.reconcileDeferredQualityRepair(job);
-    if (!retry && job.type === "extract_source_experience") this.refreshExperienceBackfillRuns();
-    if (!retry && job.type === "analyze_source_diagnostic") this.refreshRecommendationBackfillRuns();
-    return true;
+    // The lease check and all durable failure side effects share one write
+    // transaction. An old worker must not back off a replacement worker.
+    return transaction(this.db, () => {
+      if (!this.ownsJob(job.id, job.locked_by || this.workerId, Number(job.lease_generation || 0))) return false;
+      const providerPressure = isProviderPressure(error);
+      const retry = error?.retryable !== false && job.attempts < job.max_attempts;
+      if (providerPressure) {
+        this.providerPressureStreak += 1;
+        this.providerSuccessStreak = 0;
+      }
+      const baseDelayMs = providerPressure
+        ? Math.min(this.providerBackoffMaxMs, this.providerBackoffInitialMs * 2 ** Math.min(10, Math.max(0, this.providerPressureStreak - 1)))
+        : Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
+      const delayMs = Math.max(Number(error?.retryAfterMs || 0),laneBackoffMs(job.workload_class,
+        Math.round(baseDelayMs * (0.8 + Math.random() * 0.4))));
+      const availableAt = new Date(this.clock().getTime() + delayMs).toISOString();
+      if (providerPressure) {
+        if (job.type === 'generate_visuals') this.visualBackoffUntil = Math.max(this.visualBackoffUntil || 0, Date.parse(availableAt));
+        else this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
+      }
+      const timestamp = this.jobTimestamp();
+      if(providerPressure)this.db.prepare(`UPDATE model_call_metrics SET retry_after_ms=COALESCE(?,retry_after_ms),backoff_until=?
+        WHERE id=(SELECT id FROM model_call_metrics WHERE run_id=? ORDER BY created_at DESC,id DESC LIMIT 1)`)
+        .run(error?.retryAfterMs??null,availableAt,job.id);
+      const frozenProvider=json(job.model_profile_json,{}).provider;
+      const providerAliases = { 'Vertex Gemini':'vertex', 'Gemini API':'gemini', DeepSeek:'deepseek', OpenAI:'openai', Kimi:'kimi' };
+      const pressuredProvider=String(providerAliases[error?.provider] || error?.provider || frozenProvider || this.activeProvider || "");
+      if(providerPressure&&job.type!=="generate_visuals"&&pressuredProvider)this.db.prepare(`INSERT INTO provider_runtime_state(provider,model,
+        consecutive_failures,backoff_until,updated_at) VALUES (?,?,1,?,?) ON CONFLICT(provider) DO UPDATE SET
+        consecutive_failures=provider_runtime_state.consecutive_failures+1,
+        backoff_until=MAX(COALESCE(provider_runtime_state.backoff_until,''),excluded.backoff_until),updated_at=excluded.updated_at`)
+        .run(pressuredProvider,json(job.model_profile_json,{}).model||"",availableAt,timestamp);
+      const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+      const failureClass = terminalFailureClass(error, retry, providerPressure);
+      const failureCode = String(error?.code || error?.status || "").slice(0, 120);
+      const failureDiagnostic = structuredFailureDiagnostic(job, error);
+      const changed = this.db.prepare(`
+        UPDATE jobs SET status=?, available_at=?, next_eligible_at=?,last_error=?, completed_at=?, duration_ms=?,
+          failure_class=?,last_failure_code=?,failure_details_json=?,failure_execution_kind=?,
+          locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
+        WHERE id=? AND status='running' AND locked_by=? AND lease_generation=?
+      `).run(retry ? "queued" : "failed", availableAt, retry ? availableAt : null, String(error?.message || error).slice(0, 4_000),
+        retry ? null : timestamp, retry ? null : durationMs, failureClass, failureCode,
+        JSON.stringify(failureDiagnostic.details), failureDiagnostic.executionKind,
+        timestamp, job.id, job.locked_by || this.workerId,
+        Number(job.lease_generation || 0)).changes;
+      if (changed !== 1) return false;
+      this.db.prepare(`INSERT INTO production_failure_diagnostics(id,job_id,job_attempt,stage,error_code,execution_kind,
+        draft_revision,input_hash,candidate_hash,details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(job_id,job_attempt,error_code) DO UPDATE SET execution_kind=excluded.execution_kind,
+          draft_revision=excluded.draft_revision,input_hash=excluded.input_hash,candidate_hash=excluded.candidate_hash,
+          details_json=excluded.details_json,created_at=excluded.created_at`).run(
+        id("failure_diag"),job.id,Number(job.attempts || 0),job.type,failureCode || "PRODUCTION_FAILED",
+        failureDiagnostic.executionKind,failureDiagnostic.draftRevision,failureDiagnostic.inputHash,
+        failureDiagnostic.candidateHash,JSON.stringify(failureDiagnostic.details),timestamp);
+      const message = String(error?.message || error).slice(0, 4_000);
+      if (job.type === "extract_source") {
+        this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
+      } else if (!retry && ["extract_source", "preflight_source", "segment_source"].includes(job.type)) {
+        this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
+      } else if (!retry && job.type === "plan_content") {
+        this.db.prepare("UPDATE topic_candidates SET status='candidate', updated_at=? WHERE id=?").run(now(), job.entity_id);
+      } else if (!retry && ["generate_draft", "compose_frontend_page_plan"].includes(job.type)) {
+        this.db.prepare("UPDATE content_briefs SET status='exception', last_error=?, updated_at=? WHERE id=?").run(message, now(), job.entity_id);
+      } else if (!retry && ["review_draft", "revise_draft", "compose_frontend_page", "compose_publish_page", "push_wordpress_draft"].includes(job.type)) {
+        this.db.prepare("UPDATE article_drafts SET status='exception', updated_at=? WHERE id=?").run(now(), job.entity_id);
+      }
+      if (!retry && PRODUCTION_JOB_TYPES.has(job.type)) this.handleTerminalProductionFailure(job, error);
+      if (!retry && (job.type === 'generate_visuals'
+        || ['compose_frontend_page','compose_publish_page','push_wordpress_draft'].includes(job.type)
+          && /MEDIA_|VISUAL_|IMAGE_|429|RESOURCE_EXHAUSTED/i.test(`${failureCode} ${message}`))) {
+        const draftId = job.type === 'generate_visuals' ? job.entity_id : this.productionContext(job)?.draft_id;
+        if (draftId) this.db.prepare("UPDATE article_drafts SET status='needs_review',updated_at=? WHERE id=?")
+          .run(now(), draftId);
+      }
+      if (!retry && ["generate_visuals", "compose_frontend_page"].includes(job.type)) this.reconcileDeferredQualityRepair(job);
+      if (!retry && job.type === "extract_source_experience") this.refreshExperienceBackfillRuns();
+      if (!retry && job.type === "analyze_source_diagnostic") this.refreshRecommendationBackfillRuns();
+      return true;
+    });
   }
 
   handleTerminalProductionFailure(job, error) {
@@ -4273,6 +4299,23 @@ export class Repository {
     return results;
   }
 
+  sourceExperienceJobs(sources) {
+    const ids=sources.filter(s=>s.experience_status!=='succeeded').map(s=>s.id);
+    if(!ids.length)return new Map();
+    const rows=this.db.prepare(`SELECT j.status,j.last_failure_code,j.last_error,j.entity_id AS source_id
+      FROM jobs j JOIN sources s ON s.id=j.entity_id
+      LEFT JOIN capture_versions cv ON cv.source_id=s.id AND cv.capture_version=s.capture_version
+      WHERE j.type='extract_source_experience' AND j.entity_id IN (${ids.map(()=>'?').join(',')})
+      AND julianday(j.created_at)>=julianday(COALESCE(cv.captured_at,s.captured_at))
+      AND (j.dedupe_key NOT LIKE 'experience-current:%'
+        OR j.dedupe_key LIKE 'experience-current:'||s.id||':'||s.capture_version||':%')
+      ORDER BY CASE j.status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+        j.created_at DESC,j.updated_at DESC,j.id DESC`).all(...ids);
+    const result=new Map();
+    for(const row of rows)if(!result.has(row.source_id))result.set(row.source_id,row);
+    return result;
+  }
+
   listSources(limit = 100, { ids = null } = {}) {
     const selectedIds = Array.isArray(ids) ? [...new Set(ids.map(String))].slice(0, 100) : null;
     if (selectedIds && !selectedIds.length) return [];
@@ -4317,10 +4360,17 @@ export class Repository {
         AND COALESCE(sg.source_id,mb.source_id,j.entity_id) IN (${pageIds.map(() => '?').join(',')})
     `).all(...pageIds);
     const queueStates = sourceQueueStates(queueJobs);
+    const experienceJobs=this.sourceExperienceJobs(sources);
     return sources.map((source, index) => {
       const queue = queueStates.get(source.id) || null;
       const completeness = json(source.completeness_json, {});
-      return { ...source, list_number: index + 1, authority_suggestion: suggestAuthority(source.canonical_url),
+      const experienceJob=experienceJobs.get(source.id);
+      return { ...source,
+        experience_status:source.experience_status==='succeeded' ? 'succeeded'
+          : experienceJob?.status==='succeeded' ? 'failed' : experienceJob?.status || source.experience_status,
+        experience_error:experienceJob?.status==='failed' ? experienceJob.last_failure_code || experienceJob.last_error
+          : experienceJob?.status==='succeeded' ? 'EXPERIENCE_ARTIFACT_MISSING' : null,
+        list_number: index + 1, authority_suggestion: suggestAuthority(source.canonical_url),
         discovery_summary: { text: Boolean(completeness.text?.complete), dom: Boolean(completeness.dom?.complete),
           images: completeness.images || {}, videos: completeness.videos || {} },
         media_durability_status: Number(source.discovered_media_count) === Number(source.stored_original_count) ? "ORIGINAL_STORED"
@@ -4394,10 +4444,15 @@ export class Repository {
         AND COALESCE(sg.source_id,mb.source_id,direct.id) IN (${wanted.map(()=>'?').join(',')})
       ORDER BY j.updated_at DESC`).all(...wanted);
     const states=sourceQueueStates(jobs);
+    const experienceJobs=this.sourceExperienceJobs(rows);
     return rows.map((row)=>{
       const queue=states.get(row.id)||null;
       const currentQueue=row.status==="processed"&&queue?.state==="failed"?null:queue;
-      return {...row,experience_degraded:Boolean(row.experience_degraded),stale_experience:Boolean(row.stale_experience),
+      const experienceJob=experienceJobs.get(row.id);
+      return {...row,experience_status:row.experience_status==='succeeded' ? 'succeeded'
+          : experienceJob?.status==='succeeded' ? 'failed' : experienceJob?.status || row.experience_status,
+        experience_error:experienceJob?.status==='failed' ? experienceJob.last_failure_code || experienceJob.last_error : null,
+        experience_degraded:Boolean(row.experience_degraded),stale_experience:Boolean(row.stale_experience),
         queue:currentQueue,current_stage:currentQueue?.stage||sourceStageFromProjection(row)};
     });
   }
@@ -4800,11 +4855,18 @@ export class Repository {
         const identity = entities.get(entityKey) || { entityKey, canonicalSubject, aliases: uniqueEntityAliases([canonicalSubject, row.subject]), status: "resolved", ...metadata };
         identity.aliases = uniqueEntityAliases([canonicalSubject, row.subject]);
         const canonicalKey = normalizeClaimKey(item?.canonical_key);
+        // Equal values do not make two source claims interchangeable: quotes,
+        // scopes and evidence-span references may differ. Keep the existing key
+        // on collision while resolving identity; never delete/overwrite either
+        // claim to satisfy the source/key/value uniqueness constraint.
+        const collision = canonicalKey && canonicalKey !== row.normalized_key
+          && this.db.prepare('SELECT 1 FROM claims WHERE source_id=? AND normalized_key=? AND value_text=? AND id<>?')
+            .get(row.source_id,canonicalKey,row.value_text,row.id);
         this.db.prepare(`
           UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN normalized_key ELSE original_normalized_key END,
             normalized_key=?, entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status='resolved',
             entity_type=?, granularity=?, entity_location_json=? WHERE id=?
-        `).run(canonicalKey || row.normalized_key, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases),
+        `).run(collision ? row.normalized_key : canonicalKey || row.normalized_key, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases),
           identity.entityType, identity.granularity, JSON.stringify(identity.location || {}), row.id);
         for (const alias of uniqueEntityAliases([row.subject, ...identity.aliases])) this.upsertEntityAlias(destinationSlug, normalizeEntityAlias(alias), identity, "model", Number(item.confidence), timestamp);
       }
@@ -6066,8 +6128,11 @@ export class Repository {
   briefFacts(briefId) {
     const brief = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id = ?").get(briefId);
     if (!brief) return [];
-    const packetSnapshots = (this.getWritingPacket(briefId)?.evidence_ledger || []).map((entry) => entry?.fact_snapshot);
-    return packetSnapshots.length && packetSnapshots.every(Boolean)
+    const packet = this.getWritingPacket(briefId);
+    const packetSnapshots = (packet?.evidence_ledger || []).map((entry) => entry?.fact_snapshot);
+    if (packet?.context?.version === 2 && !packetSnapshots.every(Boolean))
+      throw new Error('WRITING_PACKET_INVALID: selected evidence snapshot is missing.');
+    return (packet?.context?.version === 2 || packetSnapshots.length) && packetSnapshots.every(Boolean)
       ? packetSnapshots : this.topicFacts(brief.candidate_id);
   }
 
@@ -6076,7 +6141,8 @@ export class Repository {
   briefRouteBundle(briefId) {
     const brief = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id = ?").get(briefId);
     if (!brief) return undefined;
-    return this.getWritingPacket(briefId)?.context?.route_bundle || this.routeForCandidate(brief.candidate_id);
+    const context = this.getWritingPacket(briefId)?.context;
+    return context?.version === 2 ? context.route_bundle || null : context?.route_bundle || this.routeForCandidate(brief.candidate_id);
   }
 
   getBriefPackage(briefId) {
@@ -6085,12 +6151,14 @@ export class Repository {
     const topicPackage = this.getTopicPackage(brief.candidate_id);
     const writingPacket = this.getWritingPacket(briefId);
     const packetSnapshots = (writingPacket?.evidence_ledger || []).map((entry) => entry?.fact_snapshot);
+    if (writingPacket?.context?.version === 2 && !packetSnapshots.every(Boolean))
+      throw new Error('WRITING_PACKET_INVALID: selected evidence snapshot is missing.');
     // Once a Writing Packet freezes its evidence, every downstream stage must
     // use those exact snapshots. Falling back to live destination Knowledge at
     // save/review time can silently replace an article-specific route with an
     // older fact sharing the same normalized key, then strip the honest Draft
     // ledger as "unsupported" even though the writer used the frozen packet.
-    const facts = packetSnapshots.length && packetSnapshots.every(Boolean)
+    const facts = (writingPacket?.context?.version === 2 || packetSnapshots.length) && packetSnapshots.every(Boolean)
       ? packetSnapshots : topicPackage?.facts || [];
     const contentPolicy = contentPolicyFor(brief, facts);
     const publishedInventory = this.listWordPressInventory();
@@ -6099,8 +6167,9 @@ export class Repository {
       topic:brief.topic,destination:brief.destination_slug,proposal:topicPackage?.approved_proposal,
       plan:json(brief.plan_json,{}),facts,candidateId:brief.candidate_id});
     const linkInventory = editorialSeo.links;
-    const availableAssets=this.authorizedSourceAssetsForBrief(brief,{packet:writingPacket});
-    const inventoryPage=this.authorizedSourceAssetsForBrief(brief,{packet:writingPacket,includeUnavailable:true});
+    const bindingCache=new Map(); // One synchronous package read; never shared across jobs or edits.
+    const availableAssets=this.authorizedSourceAssetsForBrief(brief,{packet:writingPacket,bindingCache});
+    const inventoryPage=this.authorizedSourceAssetsForBrief(brief,{packet:writingPacket,includeUnavailable:true,bindingCache});
     const mediaInventory=[...new Map([...availableAssets,...inventoryPage].map(asset=>[asset.id,asset])).values()];
     return {
       ...topicPackage,
@@ -6111,7 +6180,8 @@ export class Repository {
       frontend_page_plan: this.getFrontendPagePlan(briefId),
       narrative_plan: this.getNarrativePlan(briefId),
       writing_packet: writingPacket,
-      route_bundle:writingPacket?.context?.route_bundle || this.routeForCandidate(brief.candidate_id),
+      route_bundle:writingPacket?.context?.version === 2 ? writingPacket.context.route_bundle || null
+        : writingPacket?.context?.route_bundle || this.routeForCandidate(brief.candidate_id),
       content_policy: contentPolicy,
       reader_sources: readerSources(facts),
       media_availability:mediaAvailabilitySnapshot(mediaInventory,{...inventoryPage.retrieval,
@@ -6659,9 +6729,43 @@ export class Repository {
     const localRoute=current.filter(v=>v.acquisition_strategy==='render_route_schematic');
     const visuals=normalizeVisuals(current.filter(v=>v.acquisition_strategy!=='render_route_schematic'),effectiveDraft,{...row,route_bundle:contentPackage?.route_bundle},assets,policy);
     visuals.push(...localRoute.map(v=>({...v,model:null})));
-    this.replaceDraftVisuals(draftId,visuals,effectiveDraft.strategy_version);
-    this.refreshDraftSchema(draftId);
+    transaction(this.db,()=>{
+      this.reviseAutomaticMediaPlan(draftId,current,visuals);
+      this.replaceDraftVisuals(draftId,visuals,effectiveDraft.strategy_version);
+      this.refreshDraftSchema(draftId);
+    });
     return this.listDraftVisuals(draftId);
+  }
+
+  reviseAutomaticMediaPlan(draftId,current,proposed) {
+    const manifest=mediaManifestForDraft(this.db,draftId);
+    if(!manifest || !proposed.length || proposed.some(v=>v.media_metadata?.required_visual_gap))return false;
+    const retired=current.filter(v=>v.media_metadata?.authorized_asset_match?.mode==='article_fallback'
+      && v.acquisition_strategy!=='use_authorized_source_image'
+      && !v.media_metadata?.required_visual_obligation?.required
+      && !v.media_metadata?.manual_article_selection?.locked
+      && !proposed.some(p=>p.source_asset_id===v.source_asset_id));
+    if(!retired.length)return false;
+    const draft=this.db.prepare('SELECT * FROM article_drafts WHERE id=?').get(draftId);
+    if(!requiresOriginalBodyMedia(draft.strategy_version) || draft.status==='published'
+      || current.some(v=>v.media_metadata?.manual_article_selection?.locked || v.acquisition_strategy==='render_route_schematic')
+      || this.db.prepare("SELECT 1 FROM wordpress_publications WHERE draft_id=? AND status='synced'").get(draftId))return false;
+    const owner=this.db.prepare(`SELECT co.id FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
+      WHERE cb.id=? AND co.approved_at IS NOT NULL`).get(draft.brief_id);
+    if(!owner)return false;
+    transaction(this.db,()=>{
+      const timestamp=now();
+      this.db.prepare(`INSERT INTO production_record_audit(id,opportunity_id,action,status,actor,idempotency_key,detail_json,created_at)
+        VALUES (?,?,'repair_automatic_media_plan','completed','pipeline',?,?,?)`).run(id('audit'),owner.id,
+          `original-media-policy:${draftId}:r${draft.revision}`,
+          JSON.stringify({draft_id:draftId,from_revision:draft.revision,to_revision:draft.revision+1,
+            reason:'automatic_fallback_must_not_require_paid_recomposition',previous_manifest:manifest,
+            previous_visuals:current,retired_visual_ids:retired.map(v=>v.id),body_hash:draft.content_hash}),timestamp);
+      this.db.prepare('UPDATE article_drafts SET revision=revision+1,updated_at=? WHERE id=?').run(timestamp,draftId);
+      for(const table of ['frontend_page_compositions','frontend_publish_compositions'])
+        this.db.prepare(`UPDATE ${table} SET status='stale_contract',updated_at=? WHERE draft_id=?`).run(timestamp,draftId);
+    });
+    return true;
   }
 
   // Discovery fills missing original-photo coverage, even when a card already
@@ -9270,7 +9374,7 @@ export class Repository {
     return { factId, action, status: hidden ? "hidden" : "visible", destinationSlug: fact.destination_slug };
   }
 
-  authorizedSourceAssetsForBrief(brief, { packet = null, additionalSourceIds = [], explicitAssetIds = [], includeUnavailable = false, includeRouteEvidence = true, includeClaimContext = true, assetCache = null, candidateFilter = null, limit = 160, offset = 0 } = {}) {
+  authorizedSourceAssetsForBrief(brief, { packet = null, additionalSourceIds = [], explicitAssetIds = [], includeUnavailable = false, includeRouteEvidence = true, includeClaimContext = true, assetCache = null, bindingCache = new Map(), candidateFilter = null, limit = 160, offset = 0 } = {}) {
     const claimKeys = json(brief.evidence_ledger_json, []);
     // Media discovery and every input checkpoint need only this article's
     // evidence. Loading and decoding the whole destination on each lane wait
@@ -9373,14 +9477,17 @@ export class Repository {
         WHERE source_id=? AND input_hash=? AND status='succeeded' ORDER BY created_at DESC LIMIT 1`).get(sourceId,currentInput.input_hash);
       routeSources.set(sourceId,json(row?.route_fragments_json,[]));
     }
+    const uncached=assets.filter(asset=>!bindingCache.has(asset.id)
+      && (includeRouteEvidence || !assetCache?.has(asset.id))).map(asset=>asset.id);
+    for(const [id,state] of readMediaBindingStates(this.db,uncached))bindingCache.set(id,state);
     const result=assets.map((asset)=>{
       if(!includeRouteEvidence && assetCache?.has(asset.id))return assetCache.get(asset.id);
       const claims=[...byId.get(asset.id).claims.values()];
       const hydrated={...hydrateSourceAssetAnalysis({...asset,
         evidence_subject:claims.length ? (claims[0].canonical_subject || claims[0].subject || '') : '',
         evidence_text:claims.map((claim)=>[claim.canonical_subject,claim.subject,
-          claim.predicate,claim.value_text].join(' ')).join(' ')}),source_bindings:readMediaBindings(this.db,asset.id),
-        source_binding_issues:readMediaBindingIssues(this.db,asset.id),
+          claim.predicate,claim.value_text].join(' ')).join(' ')}),source_bindings:bindingCache.get(asset.id).bindings,
+        source_binding_issues:bindingCache.get(asset.id).issues,
         route_source_fragments:asset.capture_version===asset.source_capture_version ? routeSources.get(asset.source_id) : []};
       if(!includeRouteEvidence)assetCache?.set(asset.id,hydrated);
       return hydrated;
@@ -9692,7 +9799,7 @@ export class Repository {
       UNION ALL
       SELECT 'media_dispatch',m.id,'warning',m.created_at,m.visual_id,m.substage,'',m.error_code,'',
         1,1,NULL,m.scope_key,m.substage,m.state
-      FROM media_dispatches m WHERE m.state IN ('dispatch_started','outcome_unknown')
+      FROM media_dispatches m WHERE ${blockingMediaDispatchSql('m')}
     )`;
     const filters = [];
     const values = [];
@@ -10308,7 +10415,8 @@ export class Repository {
     this.db.prepare(`UPDATE model_call_metrics SET role=?,requested_model=?,returned_model=?,source_run_id=?,article_revision=? WHERE id=?`).run(
       metric.role || "unknown", metric.requestedModel || metric.model || null, metric.returnedModel || null,
       metric.sourceRunId || null, metric.articleRevision ?? null, metricId);
-    if (metric.telemetryPhase === "started") return metricId;
+    if (metric.telemetryPhase === "started" || metric.requestKind === "cache_hit"
+      || metric.cacheHit || Number(metric.attempts ?? 1) === 0) return metricId;
     const provider=metric.provider||"unknown",succeeded=metric.status==="succeeded";
     this.db.prepare(`INSERT INTO provider_runtime_state(provider,model,last_success_at,last_failure_at,last_error_code,
         consecutive_failures,backoff_until,last_latency_ms,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
@@ -10975,6 +11083,11 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   // deterministically instead of fabricating image requests or leaving the page
   // needlessly image-free.
   const eligible = supplied
+    .filter((item)=>!freeOriginalPolicy || item?.media_metadata?.authorized_asset_match?.mode!=='article_fallback'
+      || item?.required===true || item?.required_in_article===true
+      || item?.media_metadata?.required_visual_obligation?.required===true
+      || item?.media_metadata?.manual_article_selection?.locked
+      || item?.acquisition_strategy==='use_authorized_source_image')
     .filter((item) => item?.source_asset_id || item?.factual_image_required || item?.required_in_article
       || item?.media_metadata?.required_visual_obligation?.required
       || !["infographic", "map_or_route"].includes(item?.image_type));
@@ -11026,6 +11139,12 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     if (!visual.source_asset_id && !visual.factual_image_required
       && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
+    // A required slot may have consumed an original previously added as an
+    // optional fallback. Do not replace that redundant fallback with a new
+    // paid task merely to preserve the old image count.
+    if(freeOriginalPolicy && visual.source_asset_id && !exact
+      && visual.media_metadata?.authorized_asset_match?.mode==='article_fallback'
+      && !visual.media_metadata?.required_visual_obligation?.required)return null;
     const editorialVerification=exact?.provenance?.editorialLocationVerification;
     const editorVerifiedExact=Boolean(exact && editorialVerification?.status === 'confirmed'
       && editorialVerification.draftId === draft.id && editorialVerification.evidence);
@@ -11089,6 +11208,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const keepQualified=qualifiedExisting && exact?.id===asset.id
       && (editorVerifiedExact || !exactHasPixelSubjects || exactScore >= pixelMatchFloor(exact));
     unusedAssets.delete(asset.id);
+    if(asset.original_sha256)for(const [otherId,other] of unusedAssets)
+      if(other.original_sha256===asset.original_sha256)unusedAssets.delete(otherId);
     if (exact && exact.id !== asset.id) {
       unusedAssets.delete(exact.id);
       displacedAssetIds.add(exact.id);
@@ -11392,9 +11513,9 @@ function bodyFallbackCapability(asset,freeOriginalPolicy,request={}) {
   const decision=decideVisualAsset(asset,request);
   const freeOriginal=decision.action==='retain' && asset.local_photo_audit?.status==='eligible'
     && asset.local_photo_audit.sha256===asset.original_sha256 && hasImageLevelDescription(asset);
-  const usefulTranslation=decision.action==='localize' && asset.analysis_status==='ready'
-    && (decision.translateRegionIds?.length>0 || /^(?:zh|chinese|mixed)/i.test(asset.language_status || ''));
-  return {decision,usable:!freeOriginalPolicy || freeOriginal || usefulTranslation};
+  // Automatic decoration must not create paid translation obligations. Cards
+  // explicitly requested by the editorial plan still use the normal matcher.
+  return {decision,usable:!freeOriginalPolicy || freeOriginal};
 }
 
 function hasImageLevelDescription(asset) {
@@ -11516,11 +11637,13 @@ function sourceAssetAspectRatio(asset) {
 function visualAssetMatchScore(visual, asset) {
   if(bindingBlocksPhoto(asset,visual)) return 0;
   if (bindingSupportsPhoto(asset,visual)) return 1;
-  const requested = topicTokens(`${visual.image_subject || ""} ${visual.purpose || ""}`);
+  const generic=new Set(['chongqing','travel','guide','photo','image','city','street','person','route','food','area','landmark','view']);
+  const subject=topicTokens(visual.image_subject || '');
+  const requested = [...subject].some(token=>!generic.has(token)) ? subject
+    : topicTokens(`${visual.image_subject || ''} ${visual.purpose || ''}`);
   const described = topicTokens(assetTopicText(asset));
   if (!requested.size || !described.size) return 0;
   const overlapping=[...requested].filter((token)=>described.has(token));
-  const generic=new Set(['chongqing','travel','guide','photo','image','city','street','person','route','food','area','landmark','view']);
   if (!overlapping.some((token)=>!generic.has(token))) return 0;
   const overlap = overlapping.length;
   // Cover the requested subject, rather than rewarding a broad asset merely
@@ -11539,7 +11662,7 @@ function assetTopicText(asset={}) {
   // caption. Photo metadata remains available for the legacy fallback path.
   const values=[...(pixelDescribed ? [] : [asset.alt_text,asset.caption_text,asset.nearby_text]),
     ...(Array.isArray(asset.primary_subjects) ? asset.primary_subjects : []),
-    ...(!pixelDescribed && Array.isArray(asset.entities) ? asset.entities.map((entry)=>typeof entry === "string" ? entry
+    ...((!pixelDescribed || asset.asset_kind==='documentary_photo') && Array.isArray(asset.entities) ? asset.entities.map((entry)=>typeof entry === "string" ? entry
       : entry?.name || entry?.label || entry?.value || "") : [])];
   return values.filter(Boolean).join(" ");
 }

@@ -33,6 +33,7 @@ export function createAiClient(config, fetchImpl = fetch) {
       try { return Boolean(batchClient(snapshot).batchEnabled); } catch { return false; }
     },
     async completeJson(input) {
+      input.signal?.throwIfAborted();
       const identity = callIdentity(config, input);
       if (responseCache.has(identity.key)) {
         const cached = responseCache.get(identity.key);
@@ -89,12 +90,26 @@ export function createAiClient(config, fetchImpl = fetch) {
       }
       // Paid-dispatch ledgers must see only requests that leave this process;
       // cache hits and shared in-flight calls above never reach the provider.
-      input.onProviderDispatch?.();
-      const completion = current().completeJson(input);
+      const completion = (async () => {
+        const value = await current().completeJson(input);
+        try {
+          acceptCompletion(input, value);
+          return value;
+        } catch (error) {
+          // Only an explicitly opted-in business validator may request one
+          // correction. Transport failures never reach this branch. Share and
+          // cache the validated final result under the original request identity.
+          const repairedContent = input.repairInvalidOutput?.(error);
+          if (repairedContent == null) throw error;
+          input.signal?.throwIfAborted();
+          const repaired = await current().completeJson({ ...input, content: repairedContent });
+          acceptCompletion(input, repaired);
+          return repaired;
+        }
+      })();
       pending.set(identity.key, completion);
       try {
         const value = await completion;
-        acceptCompletion(input, value);
         responseCache.set(identity.key, structuredClone(value));
         while (responseCache.size > maxCacheEntries) responseCache.delete(responseCache.keys().next().value);
         return value;

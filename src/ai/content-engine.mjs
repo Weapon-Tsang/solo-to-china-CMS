@@ -1,6 +1,7 @@
 import { slugify, truncate } from "../utils.mjs";
 import { OPPORTUNITY_TITLE_SCHEMA, OPPORTUNITY_TITLE_PROMPT, validateOpportunityTitles } from '../services/opportunity-titles.mjs';
-import { compactExperienceReferences } from './experience-references.mjs';
+import { compactExperienceReferences, validateExperienceReferences } from './experience-references.mjs';
+import {EXPERIENCE_RECOVERY_VERSION} from '../experience-recovery.mjs';
 import { CONTENT_STRATEGY } from "../content-strategy.mjs";
 import { createAiClient } from "./client.mjs";
 import { evidenceTextContains, pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../evidence-validator.mjs";
@@ -312,7 +313,12 @@ export class ContentEngine {
   async composeOpportunityTitles(research, options = {}) {
     return this.respond({name:'opportunity_editorial_titles',schema:OPPORTUNITY_TITLE_SCHEMA,
       instructions:OPPORTUNITY_TITLE_PROMPT,input:JSON.stringify(research),
-      options:{...options,validateOutput:output=>validateOpportunityTitles(research,output)}});
+      options:{...options,validateOutput:output=>validateOpportunityTitles(research,output),
+        repairInvalidOutput:error=>error?.code==='INVALID_OPPORTUNITY_TITLE'
+          ? JSON.stringify({...research,validation_feedback:{code:error.code,message:error.message,
+            expected_ids:research.opportunities.map(item=>item.id),
+            instruction:'Return the complete corrected batch. Use each opportunity ID exactly once and only its supplied fact keys; do not merge opportunities.'}})
+          : null}});
   }
 
   async plan(research, options = {}) {
@@ -375,13 +381,17 @@ export class ContentEngine {
   }
 
   async analyzeExperience(sourcePackage, options = {}) {
-    const references = this.config.provider === 'deepseek' ? compactExperienceReferences(sourcePackage)
-      : { input: sourcePackage, restore: output => output };
+    const references = compactExperienceReferences(sourcePackage);
     const result = await this.respond({
       name: "experience_extraction",
       schema: EXPERIENCE_SCHEMA,
       instructions: EXPERIENCE_PROMPT + ROUTE_EXTRACTION_PROMPT,
-      input: JSON.stringify(references.input), options,
+      input: JSON.stringify(references.input), options:{...options,
+        validateOutput:output=>validateExperienceReferences(output,references.input),
+        repairInvalidOutput:error=>error?.code==='EXPERIENCE_REFERENCE_INVALID'
+          ? JSON.stringify({...references.input,validation_feedback:{
+            instruction:'Correct the invalid evidence identifiers. Copy exact supplied compact IDs; never shorten or invent identifiers. Preserve grounded content.',
+            errors:error.details}}) : null},
     });
     return { ...result, output: references.restore(result.output) };
   }
@@ -406,10 +416,10 @@ export class ContentEngine {
   }
 
   async draft(contentPackage, revisionFeedback = null, options = {}) {
-    if(contentPackage.route_bundle) assertFrozenRoute(contentPackage.route_bundle);
     const context = contentPackage.writing_packet?.context;
     const policy = (context?.version === 2 ? context.content_policy : contentPackage.content_policy) || {};
     const input = draftInputDto(contentPackage);
+    if(input.route_bundle) assertFrozenRoute(input.route_bundle);
     const allowedFactKeys = input.evidence_ledger_facts.map((fact) => fact.normalized_key);
     const outline = contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || [];
     const allowedSectionIds = outline.map((section) => section.section_id).filter(Boolean);
@@ -433,7 +443,7 @@ export class ContentEngine {
       validateGeneratedDraftProtectedValues(output, input.evidence_ledger_facts);
       normalizeGeneratedDraftEvidenceSources(output, input.evidence_ledger_facts, outline);
       validateGeneratedDraftStructure(output, outline);
-      validateRouteDraft(contentPackage.route_bundle,output);
+      validateRouteDraft(input.route_bundle,output);
     };
     const request = (extraFeedback = revisionFeedback) => this.respond({
       name: "article_draft_v2",
@@ -584,7 +594,8 @@ export class ContentEngine {
 
   async respond({ name, schema, instructions, input, options = {} }) {
     return this.client.completeJson({ name, schema, instructions, content: input, signal: options.signal || null,
-      telemetryContext: options.telemetryContext || null, validateOutput: options.validateOutput });
+      telemetryContext: options.telemetryContext || null, validateOutput: options.validateOutput,
+      repairInvalidOutput: options.repairInvalidOutput });
   }
 
   artifactContract(stage) {
@@ -606,7 +617,10 @@ export class ContentEngine {
       compose_frontend_page: ['frontend_page_payload', null, pagePayloadPrompt.toString()],
     };
     const [name, schema, prompt] = contracts[stage] || [stage, null, 'deterministic-v2'];
-    return { name, schema, prompt, ...(stage === 'extract_source_experience' && this.config.provider === 'deepseek'
+    return { name, schema, prompt,
+      ...(stage==='extract_source_experience' ? {recoveryVersion:EXPERIENCE_RECOVERY_VERSION} : {}),
+      ...(['generate_draft','article_bundle_v1'].includes(stage) ? { inputProjectionVersion:'scoped-writing-evidence-2' } : {}),
+      ...(stage === 'extract_source_experience' && this.config.provider === 'deepseek'
       ? { wireVersion: 'typed-experience-references-full-schema-1' } : {}) };
   }
 }
@@ -844,9 +858,10 @@ export function draftInputDto(contentPackage) {
   const validFactKeys = new Set(facts.map((fact) => fact.normalized_key));
   const outline = contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || [];
   const experiences = (context?.version === 2 ? context.experiences : contentPackage.experiences) || [];
+  const routeBundle = context?.version === 2 ? context.route_bundle || null : contentPackage.route_bundle || null;
   return {
-    route_bundle:context?.route_bundle || contentPackage.route_bundle || null,
-    approved_route_table:contentPackage.route_bundle ? routeReadableMarkdown(contentPackage.route_bundle):null,
+    route_bundle:routeBundle,
+    approved_route_table:routeBundle ? routeReadableMarkdown(routeBundle):null,
     brief: safeDraftBrief(contentPackage.brief, validFactKeys),
     writing_packet: contentPackage.writing_packet ? {
       text: safeWritingDirective(contentPackage.brief, outline),
@@ -871,12 +886,14 @@ export function draftInputDto(contentPackage) {
       latest_evidence_at: fact.latest_evidence_at, consensus_method: fact.consensus_method,
       consensus_confidence: fact.consensus_confidence, consensus_detail: fact.consensus_detail,
       validity_state: fact.validity_state,
+      selection_frozen:fact.selection_frozen,scope:fact.scope,unit:fact.unit,
       evidence: compactFactEvidence(fact.evidence).map((item) => ({ claim_id:item.claim_id || item.id, source_id: item.source_id,
         value: truncate(item.value, 500), qualifiers:(item.qualifiers || []).slice(0, 8).map((value) => truncate(value, 240)),
         quote: truncate(item.quote, 900), canonical_url: item.canonical_url, source_title: truncate(item.source_title, 180),
         published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at,
         verified_at: item.verified_at, valid_from: item.valid_from, valid_to: item.valid_to,
         date_kind: item.date_kind, date_confidence: item.date_confidence,
+        evidence_role:item.evidence_role,
         timestamp_basis: item.timestamp_basis, authority_level: item.authority_level,
         publication_usability: item.publication_usability, evidence_coverage: item.evidence_coverage,
         coverage_limitations: (item.coverage_limitations || []).slice(0, 8).map((value) => truncate(value, 240)) })),
@@ -908,12 +925,22 @@ export function draftInputDto(contentPackage) {
 
 function compactFactEvidence(evidence = []) {
   const seen = new Set();
-  return (evidence || []).filter((item) => {
-    const key = `${item?.source_id || ""}\u0000${item?.value || ""}\u0000${item?.quote || ""}`;
-    if (seen.has(key)) return false;
+  const meanings = new Set();
+  const selected = [];
+  for (const item of evidence || []) {
+    // Conditions and time scopes are factual content. Identical quotes/values
+    // do not make an adult ticket, child ticket or historical rate equivalent.
+    const meaning = JSON.stringify([item?.value,item?.qualifiers,item?.evidence_role,
+      item?.valid_from,item?.valid_to,item?.publication_usability,item?.coverage_limitations]);
+    const key = JSON.stringify([item?.source_id,item?.claim_id || item?.id,item?.quote,meaning]);
+    if (seen.has(key)) continue;
     seen.add(key);
-    return true;
-  }).slice(0, 3);
+    // Keep up to three corroborating examples, plus every distinct condition.
+    // The frozen packet still retains the complete provenance inventory.
+    if (selected.length < 3 || !meanings.has(meaning)) selected.push(item);
+    meanings.add(meaning);
+  }
+  return selected;
 }
 
 function compactGroundedExperiences(experiences = []) {

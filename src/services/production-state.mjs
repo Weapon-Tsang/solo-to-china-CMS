@@ -1,4 +1,5 @@
 import { json, sha256 } from "../utils.mjs";
+import { blockingMediaDispatchSql } from '../media-request-executor.mjs';
 import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { normalizeQualityReviewIssues } from "../ai/content-engine.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
@@ -351,7 +352,7 @@ export function buildProductionState(db, row, options = {}) {
       .includes(String(failed.last_failure_code || ""));
     if (failed.last_failure_code === "MEDIA_OUTCOME_UNKNOWN" && row.draft_id) {
       recoverable = !Boolean(db.prepare(`SELECT 1 FROM media_dispatches md JOIN article_visuals av ON av.id=md.visual_id
-        WHERE av.draft_id=? AND md.state IN ('dispatch_started','outcome_unknown') LIMIT 1`).get(row.draft_id));
+        WHERE av.draft_id=? AND ${blockingMediaDispatchSql()} LIMIT 1`).get(row.draft_id));
     }
     latestError = failureAttribution(failed, modelCalls, { explanation:explained });
   } else if (row.wordpress_status === "synced") {

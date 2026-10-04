@@ -21,6 +21,16 @@ export function mediaQuotaScope({ provider, model, accountScope = 'default' }) {
   return `${normalizedProvider}:${String(accountScope)}:${String(model || 'unknown')}`;
 }
 
+// Shared by recovery, projections and the executor. Finished recognition is a
+// retryable read, while generation, QA and unfinished calls remain protected.
+export function blockingMediaDispatchSql(alias='md') {
+  if(!/^[a-z_]+$/i.test(alias))throw new TypeError('Invalid SQL alias');
+  return `${alias}.state IN ('dispatch_started','outcome_unknown') AND NOT (
+    ${alias}.state='outcome_unknown' AND ${alias}.substage='analyze_source_image'
+    AND ${alias}.completed_at_ms IS NOT NULL
+    AND ${alias}.id<>COALESCE((SELECT owner_token FROM media_visual_lane WHERE id=1),''))`;
+}
+
 export function createMediaRequestExecutor(db, { rpm = 2, windowMs = 60_000, safetyMarginMs = 1_000,
   maxDispatches = 4, leaseMs = 10 * 60_000, clock = Date.now } = {}) {
   if (!Number.isInteger(rpm) || rpm < 1 || !Number.isInteger(maxDispatches) || maxDispatches < 1) {
@@ -163,10 +173,11 @@ export function createMediaRequestExecutor(db, { rpm = 2, windowMs = 60_000, saf
     if (outcome.error) throw outcome.error;
     const heartbeat = () => db.prepare(`UPDATE media_visual_lane SET lease_until_ms=?,heartbeat_at_ms=?
       WHERE id=1 AND owner_token=?`).run(clock() + leaseMs, clock(), token).changes === 1;
-    const finish = ({ error = null, responseReceived = false } = {}) => transaction(db, () => {
+    const finish = ({ error = null, responseReceived = false, outcomeKnown = false } = {}) => transaction(db, () => {
       const completedAtMs = clock();
       const status = Number(error?.status || error?.httpStatus || 0) || null;
-      const state = !error ? 'completed' : responseReceived || status ? 'failed' : 'outcome_unknown';
+      const state = !error ? 'completed' : responseReceived || status || outcomeKnown
+        || substage==='analyze_source_image' ? 'failed' : 'outcome_unknown';
       db.prepare(`UPDATE media_dispatches SET state=?,http_status=?,error_code=?,completed_at_ms=?
         WHERE id=? AND state='dispatch_started'`).run(state, status, error?.code || null, completedAtMs, token);
       if (status === 429) {

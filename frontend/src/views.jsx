@@ -371,6 +371,9 @@ function sourceMediaLabel(item) {
 }
 
 function sourceExperienceLabel(item) {
+  if (item.experience_status === 'failed') return '体验信息提取失败，需恢复';
+  if (item.experience_status === 'running') return '正在提取体验信息';
+  if (item.experience_status === 'queued') return '体验信息已排队';
   if (item.experience_status === "succeeded" && !item.experience_degraded) return "体验信息已提取";
   if (item.experience_status === "succeeded" && item.experience_degraded) return "体验信息因媒体缺失暂时降级";
   return "等待体验信息提取";

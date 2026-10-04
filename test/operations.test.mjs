@@ -104,6 +104,17 @@ test("editorial-media-only evidence never fans out into general source AI jobs",
   const pipeline=new Pipeline(repository,{analyzeBlueprint(){}},{sourceEngine:{enabled:true}});
   pipeline.enqueueSourceSemanticDownstream(source.id);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0);
+  const gapReport=repository.runSourceProcessingGapRecovery();
+  assert.equal(gapReport.actionCount,0,'media-only imports are terminal and must never be treated as missing extraction');
+  assert.equal(gapReport.excludedMediaOnlySources,1);
+  db.prepare("UPDATE sources SET status='manual_article_stored',source_kind='manual_article_upload',acquisition_origin='manual',submission_metadata_json='{}' WHERE id=?").run(source.id);
+  const manualMediaReport=repository.runSourceProcessingGapRecovery();
+  assert.equal(manualMediaReport.actionCount,0,'article-specific uploaded photos are not missing research extractions');
+  assert.equal(manualMediaReport.excludedMediaOnlySources,1);
+  pipeline.enqueueSourceSemanticDownstream(source.id);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0);
+  repository.runSourceProcessingGapRecovery({dryRun:false,approvedFromRunId:gapReport.id});
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0,'recovery cannot reintroduce paid source processing');
 });
 
 test("successful retry clears its previous error text", (t) => {

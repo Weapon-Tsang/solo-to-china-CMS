@@ -1,3 +1,4 @@
+import { beginProviderAttempt } from "./request-control.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -29,7 +30,7 @@ export class VertexGeminiClient {
       && String(this.config.location || "global") === "global";
   }
 
-  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null, onProviderDispatch = null }) {
     if (!this.enabled) throw new Error(this.config.provider === "gemini"
       ? "Gemini API requires an API key and a selected model."
       : "Vertex AI requires GOOGLE_CLOUD_PROJECT and a selected Gemini model.");
@@ -72,11 +73,13 @@ export class VertexGeminiClient {
       requestBody.contents[0].parts = correction ? [...parts, { text: correction }] : parts;
       const requestGateStartedAt = Date.now();
       await this.config.beforeRequest?.({ provider: this.config.provider || "vertex", model: this.config.model, stage: name, attempt: requestAttempt, schemaMode,
-        estimatedTokens: estimateRequestTokens(requestBody.systemInstruction, requestBody.contents) });
+        signal, estimatedTokens: estimateRequestTokens(requestBody.systemInstruction, requestBody.contents) });
+      let response;
+      const reportAttempt = await beginProviderAttempt({ signal, onProviderDispatch, response: () => response,
+        emit: metric => this.emitModelCall(metric) });
       const attemptStartedAt = Date.now();
       telemetryContext.retryWaitMs = Math.max(0, attemptStartedAt - requestGateStartedAt);
       const requestStartedAt = new Date(attemptStartedAt).toISOString();
-      let response;
       try {
         response = await this.fetch(endpoint, {
         method: "POST",
@@ -88,7 +91,7 @@ export class VertexGeminiClient {
         });
       } catch (error) {
         const requestError = signal?.aborted ? error : providerTransportError(this.config.provider || "vertex", error);
-        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: signal?.aborted ? "cancelled" : "failed",
           errorCode: requestError?.code || requestError?.name || "REQUEST_FAILED", retryReason: attempt ? "request_retry" : null }));
         throw requestError;
@@ -98,7 +101,7 @@ export class VertexGeminiClient {
         const message = payload?.error?.message || response.statusText;
         const fallbackMode = response.status === 400 && !isNonSchemaBadRequest(message) ? nextVertexSchemaMode(schemaMode) : null;
         if (fallbackMode) {
-          this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
             status: "failed", errorCode: "SCHEMA_MODE_UNSUPPORTED",
             retryReason: `schema_transport_fallback:${schemaMode}->${fallbackMode}`, usage: payload?.usageMetadata }));
           schemaMode = fallbackMode;
@@ -106,7 +109,7 @@ export class VertexGeminiClient {
           applyVertexSchemaTransport(requestBody, schema, schemaMode, instructions);
           continue;
         }
-        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: String(payload?.error?.code || response.status), retryReason: attempt ? "provider_retry" : null,
           usage: payload?.usageMetadata }));
         throw new ProviderRequestError(this.config.provider === "gemini" ? "Gemini API" : "Vertex Gemini", response.status, message,
@@ -120,36 +123,36 @@ export class VertexGeminiClient {
         const minimumBudget = minimumThinkingBudget(this.config.model);
         if (!thinkingFallbackUsed && configuredThinking && configuredThinking !== "LOW") {
           thinkingFallbackUsed = true;
-          this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
             status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: `thinking_budget_fallback:${configuredThinking}->LOW`, usage: payload?.usageMetadata }));
           requestBody.generationConfig.thinkingConfig = { thinkingLevel: "LOW" };
           continue;
         }
         if (!thinkingFallbackUsed && Number.isFinite(configuredBudget) && configuredBudget > minimumBudget) {
           thinkingFallbackUsed = true;
-          this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
             status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: `thinking_budget_fallback:${configuredBudget}->${minimumBudget}`, usage: payload?.usageMetadata }));
           requestBody.generationConfig.thinkingConfig = { thinkingBudget: minimumBudget };
           continue;
         }
-        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usageMetadata }));
         throw outputLimitError(name);
       }
       if (!output?.trim()) {
-        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: "EMPTY_MODEL_OUTPUT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usageMetadata }));
         throw new Error("Vertex Gemini returned no structured output.");
       }
       const parsed = parseStructuredJson(output);
       const errors = parsed.ok ? validateJsonSchema(parsed.value, schema) : [{ path: "$", message: "invalid JSON" }];
       if (parsed.ok && errors.length === 0) {
-        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "succeeded", retryReason: correction ? "structured_repair" : attempt ? "schema_transport_fallback" : null, usage: payload?.usageMetadata }));
         return { output: parsed.value, model: this.config.model,
           ...(payload.usageMetadata ? { usage: payload.usageMetadata } : {}) };
       }
-      this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+      reportAttempt(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
         status: "failed", errorCode: "INVALID_MODEL_OUTPUT", retryReason: validationAttempt ? "structured_repair" : "invalid_json_or_schema",
         usage: payload?.usageMetadata }));
       validationAttempt += 1;

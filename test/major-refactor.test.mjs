@@ -122,14 +122,18 @@ test("Experience Blocks reject invented provenance and persist grounded sequence
   assert.equal(db.prepare(`SELECT last_failure_code FROM jobs WHERE type='extract_source_experience'
     AND entity_id=? AND status='failed'`).get(sourceId).last_failure_code,"DUPLICATE_EXPERIENCE_JOB");
   const input=repository.getExperienceExtractionPackage(sourceId);
-  const saved=repository.saveExperienceExtraction(sourceId,{blocks:[
+  const output={blocks:[
     {type:"route_strategy",title:"Invented route",segment_ids:["not-a-segment"],supporting_claim_ids:[claimId],sequence:["Invented"]},
     {type:"route_strategy",title:"Early-entry sequence",traveler_goal:"Avoid the busiest flow",segment_ids:["segment-experience"],
       supporting_claim_ids:[claimId],evidence_span_ids:["span-experience"],sequence:["Book the first entry slot","Walk uphill"],confidence:.9},
     ...Array.from({length:24},(_,index)=>({type:"field_note",title:`Grounded note ${index+1}`,segment_ids:["segment-experience"],
       supporting_claim_ids:[claimId],evidence_span_ids:["span-experience"],sequence:[`Step ${index+1}`],confidence:.8})),
-  ]},"test",input);
-  assert.equal(saved.blocks.length,20);
+  ]};
+  assert.throws(()=>repository.saveExperienceExtraction(sourceId,output,"test",input),
+    error=>error.code==='EXPERIENCE_OUTPUT_BUDGET' && error.retryable===false);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM experience_blocks WHERE source_id=?").get(sourceId).count,0);
+  const saved=repository.saveExperienceExtraction(sourceId,{...output,partitioned:true},"test",input);
+  assert.equal(saved.blocks.length,25);
   const earlyEntry=saved.blocks.find((block)=>block.title==="Early-entry sequence");
   assert.ok(earlyEntry);
   assert.deepEqual(earlyEntry.supporting_claim_ids,[claimId]);
